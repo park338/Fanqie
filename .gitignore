@@ -1,0 +1,19 @@
+target/
+.idea/
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/tsconfig.tsbuildinfo
+frontend/*.log
+*.log
+src/main/resources/application-local.yml
+.env
+.env.*
+.env.example
+
+# Local Docker deployment files are kept off GitHub for this repo.
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml
+.dockerignore

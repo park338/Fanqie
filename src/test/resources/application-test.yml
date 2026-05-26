@@ -1,0 +1,12 @@
+spring:
+  datasource:
+    url: ${FANQIE_TEST_DB_URL:jdbc:mysql://localhost:3306/fanqie_test?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8}
+    username: ${FANQIE_DB_USERNAME:root}
+    password: ${FANQIE_DB_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+fanqie:
+  agent:
+    api-key: ""
