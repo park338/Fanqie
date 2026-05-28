@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   Bell,
   Bot,
   CalendarClock,
@@ -14,6 +15,7 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Save,
   Send,
   Settings as SettingsIcon,
   SkipForward,
@@ -27,11 +29,13 @@ import { CSSProperties, FormEvent, useCallback, useEffect, useRef, useState } fr
 import { api } from './api';
 import type {
   AgentPlan,
+  Interruption,
   ScheduleBlock,
   ScheduleItem,
   ScheduleStatus,
   Settings,
   Stats,
+  StatsTrend,
   Task,
   TimerMode,
   TimerState
@@ -141,11 +145,16 @@ export default function App() {
   const [timer, setTimer] = useState<TimerState | null>(null);
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [statsTrend, setStatsTrend] = useState<StatsTrend | null>(null);
+  const [interruptions, setInterruptions] = useState<Interruption[]>([]);
   const [selectedMode, setSelectedMode] = useState<TimerMode>('POMODORO');
   const [localRemaining, setLocalRemaining] = useState(defaultSettings.workMinutes * 60);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskPomodoros, setNewTaskPomodoros] = useState(1);
   const [scheduleForm, setScheduleForm] = useState<Omit<ScheduleItem, 'id'>>(emptyScheduleForm);
+  const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null);
+  const [scheduleEditForm, setScheduleEditForm] = useState<Omit<ScheduleItem, 'id'>>(emptyScheduleForm);
+  const [interruptionNote, setInterruptionNote] = useState('');
   const [scheduleNotice, setScheduleNotice] = useState<string | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentMode, setAgentMode] = useState<AgentMode>('ADVICE');
@@ -179,12 +188,14 @@ export default function App() {
     : timer?.hint ?? '准备开始';
 
   const refresh = useCallback(async () => {
-    const [nextSettings, nextTasks, nextTimer, nextSchedule, nextStats] = await Promise.all([
+    const [nextSettings, nextTasks, nextTimer, nextSchedule, nextStats, nextTrend, nextInterruptions] = await Promise.all([
       api.settings(),
       api.tasks(),
       api.timer(),
       api.scheduleToday(),
-      api.stats()
+      api.stats(),
+      api.statsTrend(7),
+      api.interruptionsToday()
     ]);
     setSettings(nextSettings);
     setSettingsDraft(nextSettings);
@@ -194,6 +205,8 @@ export default function App() {
     setLocalRemaining(nextTimer.remainingSeconds);
     setSchedule(nextSchedule);
     setStats(nextStats);
+    setStatsTrend(nextTrend);
+    setInterruptions(nextInterruptions);
   }, []);
 
   useEffect(() => {
@@ -347,10 +360,18 @@ export default function App() {
   }
 
   async function refreshSideData() {
-    const [nextTasks, nextSchedule, nextStats] = await Promise.all([api.tasks(), api.scheduleToday(), api.stats()]);
+    const [nextTasks, nextSchedule, nextStats, nextTrend, nextInterruptions] = await Promise.all([
+      api.tasks(),
+      api.scheduleToday(),
+      api.stats(),
+      api.statsTrend(7),
+      api.interruptionsToday()
+    ]);
     setTasks(nextTasks);
     setSchedule(nextSchedule);
     setStats(nextStats);
+    setStatsTrend(nextTrend);
+    setInterruptions(nextInterruptions);
   }
 
   function setTimerAndRemaining(next: TimerState) {
@@ -374,13 +395,18 @@ export default function App() {
     }
     const volume = Math.max(0.02, Math.min(1, settings.alarmVolume / 100));
     const repeat = settings.alarmRepeat ? 3 : 1;
+    const tones = settings.alarmSound === 'soft-bell'
+      ? [880, 660]
+      : settings.alarmSound === 'deep-chime'
+        ? [523, 392]
+        : [1046, 784];
     for (let i = 0; i < repeat; i += 1) {
       [0, 0.18].forEach((offset, index) => {
         const oscillator = ctx.createOscillator();
         const gain = ctx.createGain();
         const start = ctx.currentTime + i * 0.58 + offset;
         oscillator.type = 'square';
-        oscillator.frequency.setValueAtTime(index === 0 ? 1046 : 784, start);
+        oscillator.frequency.setValueAtTime(tones[index], start);
         gain.gain.setValueAtTime(0.0001, start);
         gain.gain.exponentialRampToValueAtTime(0.18 * volume, start + 0.015);
         gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.13);
@@ -426,6 +452,45 @@ export default function App() {
     await run(() => api.createSchedule(scheduleForm), async () => {
       setScheduleForm(emptyScheduleForm());
       setSchedule(await api.scheduleToday());
+    });
+  }
+
+  function schedulePayload(item: ScheduleItem, patch: Partial<Omit<ScheduleItem, 'id'>> = {}): Omit<ScheduleItem, 'id'> {
+    return {
+      title: patch.title ?? item.title,
+      startAt: patch.startAt ?? item.startAt,
+      endAt: patch.endAt ?? item.endAt,
+      status: patch.status ?? item.status,
+      source: patch.source ?? item.source,
+      taskId: patch.taskId ?? item.taskId,
+      notes: patch.notes ?? item.notes
+    };
+  }
+
+  function editSchedule(item: ScheduleItem) {
+    setEditingScheduleId(item.id);
+    setScheduleEditForm(schedulePayload(item));
+  }
+
+  async function saveScheduleEdit(event: FormEvent) {
+    event.preventDefault();
+    if (editingScheduleId == null || !scheduleEditForm.title.trim()) return;
+    await run(() => api.updateSchedule(editingScheduleId, scheduleEditForm), async () => {
+      setEditingScheduleId(null);
+      await refreshSideData();
+    });
+  }
+
+  async function patchScheduleStatus(item: ScheduleItem, status: ScheduleStatus) {
+    await run(() => api.updateSchedule(item.id, schedulePayload(item, { status })), async () => refreshSideData());
+  }
+
+  async function recordInterruption(event: FormEvent) {
+    event.preventDefault();
+    await run(() => api.recordInterruption(interruptionNote), async (recorded) => {
+      setInterruptionNote('');
+      setScheduleNotice(`已记录打断：${recorded.note}`);
+      await refreshSideData();
     });
   }
 
@@ -489,9 +554,27 @@ export default function App() {
   }
 
   async function applyChatPlan(plan: AgentPlan, blockIndexes?: number[]) {
+    const preview = await api.previewPlan(plan.draftId);
+    const selected = blockIndexes == null || blockIndexes.length === 0
+      ? preview.blocks
+      : preview.blocks.filter((block) => blockIndexes.includes(block.index));
+    const conflicts = selected.filter((block) => block.conflict);
+    if (conflicts.length > 0) {
+      addAgentMessage({
+        role: 'agent',
+        text: conflicts.map((block) => block.conflictMessage ?? `${block.block.title} 时间冲突`).join('；')
+      });
+      return;
+    }
     await run(() => api.applyPlan(plan.draftId, blockIndexes), async (items) => {
       setSchedule(await api.scheduleToday());
       addAgentMessage({ role: 'agent', text: `已加入 ${items.length} 个时间块，到点后我会提醒你。` });
+    });
+  }
+
+  async function rejectChatPlan(plan: AgentPlan) {
+    await run(() => api.rejectPlan(plan.draftId), () => {
+      addAgentMessage({ role: 'agent', text: `已拒绝「${plan.title}」，我不会把它加入今日安排。` });
     });
   }
 
@@ -505,7 +588,7 @@ export default function App() {
   }
 
   return (
-    <main className={`app-shell app-mode-${displayMode.toLowerCase().replace('_', '-')}`}>
+    <main className={`app-shell app-mode-${displayMode.toLowerCase().replace('_', '-')} theme-${settings.theme}`}>
       <header className="topbar">
         <div className="brand">
           <span className="tomato-mark" aria-hidden="true" />
@@ -580,6 +663,18 @@ export default function App() {
             </button>
           </div>
 
+          <form className="interruption-form" onSubmit={recordInterruption}>
+            <input
+              value={interruptionNote}
+              onChange={(event) => setInterruptionNote(event.target.value)}
+              placeholder="打断备注"
+            />
+            <button className="command compact" disabled={busy}>
+              <AlertCircle size={16} />
+              <span>记录打断</span>
+            </button>
+          </form>
+
           <div className="metrics">
             <div>
               <span>今日番茄</span>
@@ -594,6 +689,22 @@ export default function App() {
               <strong>{stats?.interruptionsToday ?? 0}</strong>
             </div>
           </div>
+          {statsTrend && (
+            <div className="trend-strip" aria-label="最近 7 天趋势">
+              {statsTrend.days.map((day) => (
+                <span key={day.date} title={`${day.date} · ${day.focusMinutes} 分钟`}>
+                  {day.completedPomodoros}
+                </span>
+              ))}
+            </div>
+          )}
+          {interruptions.length > 0 && (
+            <div className="interruption-list">
+              {interruptions.slice(0, 3).map((item) => (
+                <span key={item.id}>{formatClock(item.occurredAt)} · {item.note}</span>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="work-lane">
@@ -660,16 +771,42 @@ export default function App() {
               {schedule.map((item) => (
                 <article className={`timeline-item status-${item.status.toLowerCase().replace('_', '-')}`} key={item.id}>
                   <time>{formatTimeRange(item.startAt, item.endAt)}</time>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <span>
-                      {durationLabel(item.startAt, item.endAt)} · {item.source === 'AGENT' ? '小茄生成' : '手动加入'} · {statusLabels[item.status]}
-                    </span>
-                    {item.notes && <small>{item.notes}</small>}
-                  </div>
-                  <button title="删除安排" onClick={() => run(() => api.deleteSchedule(item.id), refreshSideData)}>
-                    <Trash2 size={15} />
-                  </button>
+                  {editingScheduleId === item.id ? (
+                    <form className="timeline-edit" onSubmit={saveScheduleEdit}>
+                      <input value={scheduleEditForm.title} onChange={(event) => setScheduleEditForm({ ...scheduleEditForm, title: event.target.value })} />
+                      <input type="datetime-local" value={scheduleEditForm.startAt} onChange={(event) => setScheduleEditForm({ ...scheduleEditForm, startAt: event.target.value })} />
+                      <input type="datetime-local" value={scheduleEditForm.endAt} onChange={(event) => setScheduleEditForm({ ...scheduleEditForm, endAt: event.target.value })} />
+                      <input value={scheduleEditForm.notes ?? ''} onChange={(event) => setScheduleEditForm({ ...scheduleEditForm, notes: event.target.value })} placeholder="备注" />
+                      <button title="保存安排">
+                        <Save size={15} />
+                      </button>
+                      <button type="button" title="取消编辑" onClick={() => setEditingScheduleId(null)}>
+                        <X size={15} />
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <div>
+                        <strong>{item.title}</strong>
+                        <span>
+                          {durationLabel(item.startAt, item.endAt)} · {item.source === 'AGENT' ? '小茄生成' : '手动加入'} · {statusLabels[item.status]}
+                        </span>
+                        {item.notes && <small>{item.notes}</small>}
+                      </div>
+                      <button title="编辑安排" onClick={() => editSchedule(item)}>
+                        <Save size={15} />
+                      </button>
+                      <button title="完成安排" onClick={() => patchScheduleStatus(item, 'DONE')}>
+                        <Check size={15} />
+                      </button>
+                      <button title="跳过安排" onClick={() => patchScheduleStatus(item, 'SKIPPED')}>
+                        <SkipForward size={15} />
+                      </button>
+                      <button title="删除安排" onClick={() => run(() => api.deleteSchedule(item.id), refreshSideData)}>
+                        <Trash2 size={15} />
+                      </button>
+                    </>
+                  )}
                 </article>
               ))}
             </div>
@@ -753,10 +890,16 @@ export default function App() {
                     <div className="plan-preview">
                       <div className="plan-head">
                         <strong>{currentPlan.title}</strong>
-                        <button onClick={() => applyChatPlan(currentPlan)} className="command compact">
-                          <Check size={16} />
-                          <span>全部加入</span>
-                        </button>
+                        <div className="plan-actions">
+                          <button onClick={() => applyChatPlan(currentPlan)} className="command compact">
+                            <Check size={16} />
+                            <span>全部加入</span>
+                          </button>
+                          <button onClick={() => rejectChatPlan(currentPlan)} className="command compact">
+                            <X size={16} />
+                            <span>拒绝</span>
+                          </button>
+                        </div>
                       </div>
                       {currentPlan.blocks.length === 0 && <span className="empty-state">小茄没有生成可加入的时间块。</span>}
                       {currentPlan.blocks.map((block: ScheduleBlock, index) => (
@@ -812,6 +955,22 @@ export default function App() {
               <input type="number" min={1} max={12} value={settingsDraft.longBreakInterval} onChange={(event) => setSettingsDraft({ ...settingsDraft, longBreakInterval: Number(event.target.value) })} />
             </label>
             <label>
+              主题
+              <select value={settingsDraft.theme} onChange={(event) => setSettingsDraft({ ...settingsDraft, theme: event.target.value })}>
+                <option value="system">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+            </label>
+            <label>
+              提醒音
+              <select value={settingsDraft.alarmSound} onChange={(event) => setSettingsDraft({ ...settingsDraft, alarmSound: event.target.value })}>
+                <option value="simple-notification">清脆提示</option>
+                <option value="soft-bell">柔和铃声</option>
+                <option value="deep-chime">低音钟声</option>
+              </select>
+            </label>
+            <label>
               音量
               <input type="range" min={0} max={100} value={settingsDraft.alarmVolume} onChange={(event) => setSettingsDraft({ ...settingsDraft, alarmVolume: Number(event.target.value) })} />
             </label>
@@ -822,6 +981,10 @@ export default function App() {
             <label className="toggle-row">
               <input type="checkbox" checked={settingsDraft.notificationsEnabled} onChange={(event) => setSettingsDraft({ ...settingsDraft, notificationsEnabled: event.target.checked })} />
               通知
+            </label>
+            <label className="toggle-row">
+              <input type="checkbox" checked={settingsDraft.alarmRepeat} onChange={(event) => setSettingsDraft({ ...settingsDraft, alarmRepeat: event.target.checked })} />
+              重复提醒
             </label>
             <button className="command primary">
               <Check size={17} />

@@ -90,6 +90,20 @@ button {
   padding: 22px 22px 126px;
 }
 
+body:has(.theme-light) {
+  background:
+    linear-gradient(115deg, rgba(228, 77, 70, 0.16), transparent 46%),
+    linear-gradient(245deg, rgba(47, 111, 105, 0.18), transparent 52%),
+    #f4efe7;
+}
+
+body:has(.theme-dark) {
+  background:
+    linear-gradient(115deg, rgba(228, 77, 70, 0.2), transparent 44%),
+    linear-gradient(245deg, rgba(47, 111, 105, 0.24), transparent 52%),
+    #121820;
+}
+
 .topbar {
   min-height: 58px;
   display: flex;
@@ -373,6 +387,25 @@ button {
   justify-content: center;
 }
 
+.interruption-form {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.timer-panel .interruption-form .command,
+.timer-panel .interruption-form .command:not(.primary) {
+  width: auto;
+  min-height: 38px;
+  padding: 0 12px;
+  color: #27313c;
+  border-color: #d9d2c4;
+  background: #fffaf2;
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .command {
   min-height: 40px;
   padding: 0 14px;
@@ -451,6 +484,32 @@ button {
   color: #fff;
 }
 
+.trend-strip {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.trend-strip span {
+  min-height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.interruption-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 5px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 13px;
+}
+
 .task-form,
 .schedule-form {
   display: grid;
@@ -485,7 +544,8 @@ textarea {
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   border-color: #2f6f69;
   box-shadow: 0 0 0 3px rgba(47, 111, 105, 0.16);
 }
@@ -555,7 +615,7 @@ textarea:focus {
 
 .timeline-item {
   display: grid;
-  grid-template-columns: 118px minmax(0, 1fr) 32px;
+  grid-template-columns: 118px minmax(0, 1fr) repeat(4, 32px);
   gap: 10px;
   align-items: center;
   padding: 10px;
@@ -605,6 +665,14 @@ textarea:focus {
   height: 30px;
 }
 
+.timeline-edit {
+  grid-column: 2 / -1;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 166px 166px minmax(100px, 0.8fr) 30px 30px;
+  gap: 8px;
+  align-items: center;
+}
+
 .schedule-form {
   grid-template-columns: minmax(0, 1fr) 176px 176px auto;
   align-items: end;
@@ -639,6 +707,13 @@ textarea:focus {
   justify-content: space-between;
   gap: 10px;
   align-items: center;
+}
+
+.plan-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .plan-block {

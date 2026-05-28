@@ -11,6 +11,7 @@ import cn.fanqie.pomodoro.repository.ScheduleItemRepository;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -88,6 +89,26 @@ public class ScheduleService {
         return create(request);
     }
 
+    @Transactional(readOnly = true)
+    public List<ScheduleItemDto> findByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return scheduleItems.findAllById(ids).stream()
+                .sorted(Comparator.comparingInt(item -> ids.indexOf(item.getId())))
+                .map(this::toDto)
+                .toList();
+    }
+
+    @Transactional
+    public String findConflictMessage(ScheduleBlockDto block) {
+        if (!block.endAt().isAfter(block.startAt())) {
+            return "结束时间必须晚于开始时间";
+        }
+        ScheduleItemEntity conflict = findActiveConflict(block.startAt(), block.endAt(), null);
+        return conflict == null ? null : "时间冲突：已存在安排「" + conflict.getTitle() + "」。";
+    }
+
     public ScheduleItemDto toDto(ScheduleItemEntity entity) {
         TaskEntity task = entity.getTask();
         return new ScheduleItemDto(
@@ -121,20 +142,24 @@ public class ScheduleService {
     }
 
     private void rejectTimeConflict(ScheduleItemEntity candidate, Long ignoredId) {
+        ScheduleItemEntity conflict = findActiveConflict(candidate.getStartAt(), candidate.getEndAt(), ignoredId);
+        if (conflict != null) {
+            throw new ApiException(HttpStatus.CONFLICT, "时间冲突：已存在安排「" + conflict.getTitle() + "」。");
+        }
+    }
+
+    private ScheduleItemEntity findActiveConflict(LocalDateTime startAt, LocalDateTime endAt, Long ignoredId) {
         LocalDateTime now = now();
-        List<ScheduleItemEntity> conflicts = scheduleItems
-                .findByStartAtLessThanAndEndAtGreaterThanOrderByStartAtAsc(candidate.getEndAt(), candidate.getStartAt())
+        return scheduleItems
+                .findByStartAtLessThanAndEndAtGreaterThanOrderByStartAtAsc(endAt, startAt)
                 .stream()
                 .filter(item -> ignoredId == null || !ignoredId.equals(item.getId()))
                 .filter(item -> {
                     advanceStatus(item, now);
                     return item.getStatus() == ScheduleStatus.PLANNED || item.getStatus() == ScheduleStatus.IN_PROGRESS;
                 })
-                .toList();
-        if (!conflicts.isEmpty()) {
-            ScheduleItemEntity conflict = conflicts.getFirst();
-            throw new ApiException(HttpStatus.CONFLICT, "时间冲突：已存在安排「" + conflict.getTitle() + "」。");
-        }
+                .findFirst()
+                .orElse(null);
     }
 
     private void resolveExistingConflicts(List<ScheduleItemEntity> items, LocalDateTime now) {

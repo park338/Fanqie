@@ -1,5 +1,6 @@
 package cn.fanqie.pomodoro.dto;
 
+import cn.fanqie.pomodoro.domain.PlanDraftStatus;
 import cn.fanqie.pomodoro.domain.ScheduleSource;
 import cn.fanqie.pomodoro.domain.ScheduleStatus;
 import cn.fanqie.pomodoro.domain.TimerMode;
@@ -9,6 +10,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -122,6 +124,34 @@ public final class ApiDtos {
     ) {
     }
 
+    public record DailyStatsDto(
+            LocalDate date,
+            long completedPomodoros,
+            long sessions,
+            long interruptions,
+            int focusMinutes
+    ) {
+    }
+
+    public record StatsTrendResponse(List<DailyStatsDto> days) {
+    }
+
+    public record CreateInterruptionRequest(
+            @Size(max = 500) String note,
+            Long taskId
+    ) {
+    }
+
+    public record InterruptionDto(
+            Long id,
+            String note,
+            Long taskId,
+            String taskTitle,
+            Long timerSessionId,
+            LocalDateTime occurredAt
+    ) {
+    }
+
     public record TimerSessionSummary(
             Long id,
             TimerMode mode,
@@ -160,6 +190,31 @@ public final class ApiDtos {
             String reasoningSummary,
             List<ScheduleBlockDto> blocks,
             List<String> warnings
+    ) {
+    }
+
+    public record AgentPlanDraftDto(
+            Long draftId,
+            PlanDraftStatus status,
+            String title,
+            String advice,
+            String reasoningSummary,
+            LocalDateTime createdAt,
+            LocalDateTime appliedAt
+    ) {
+    }
+
+    public record ScheduleBlockPreviewDto(
+            int index,
+            ScheduleBlockDto block,
+            boolean conflict,
+            String conflictMessage
+    ) {
+    }
+
+    public record AgentPlanPreviewResponse(
+            Long draftId,
+            List<ScheduleBlockPreviewDto> blocks
     ) {
     }
 

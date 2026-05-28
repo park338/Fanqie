@@ -5,9 +5,12 @@ import cn.fanqie.pomodoro.domain.AgentKind;
 import cn.fanqie.pomodoro.domain.PlanDraftStatus;
 import cn.fanqie.pomodoro.dto.ApiDtos.AgentAdviceRequest;
 import cn.fanqie.pomodoro.dto.ApiDtos.AgentAdviceResponse;
+import cn.fanqie.pomodoro.dto.ApiDtos.AgentPlanDraftDto;
+import cn.fanqie.pomodoro.dto.ApiDtos.AgentPlanPreviewResponse;
 import cn.fanqie.pomodoro.dto.ApiDtos.AgentPlanResponse;
 import cn.fanqie.pomodoro.dto.ApiDtos.ApplyPlanRequest;
 import cn.fanqie.pomodoro.dto.ApiDtos.ScheduleBlockDto;
+import cn.fanqie.pomodoro.dto.ApiDtos.ScheduleBlockPreviewDto;
 import cn.fanqie.pomodoro.dto.ApiDtos.ScheduleItemDto;
 import cn.fanqie.pomodoro.entity.AgentConversationEntity;
 import cn.fanqie.pomodoro.entity.AgentPlanDraftEntity;
@@ -118,6 +121,9 @@ public class AgentService {
     public List<ScheduleItemDto> applyPlan(Long draftId, ApplyPlanRequest request) {
         AgentPlanDraftEntity draft = planDrafts.findById(draftId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "计划草稿不存在"));
+        if (draft.getStatus() == PlanDraftStatus.APPLIED) {
+            return scheduleService.findByIds(readAppliedScheduleItemIds(draft));
+        }
         if (draft.getStatus() != PlanDraftStatus.DRAFT) {
             throw new ApiException(HttpStatus.CONFLICT, "计划草稿已经处理过");
         }
@@ -125,16 +131,58 @@ public class AgentService {
         List<Integer> indexes = request == null || request.blockIndexes() == null || request.blockIndexes().isEmpty()
                 ? allIndexes(blocks)
                 : request.blockIndexes();
-        List<ScheduleItemDto> created = new ArrayList<>();
+        List<ScheduleBlockDto> selected = new ArrayList<>();
         for (Integer index : indexes) {
             if (index == null || index < 0 || index >= blocks.size()) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "计划块索引无效");
             }
-            created.add(scheduleService.createFromBlock(blocks.get(index)));
+            ScheduleBlockDto block = blocks.get(index);
+            String conflict = scheduleService.findConflictMessage(block);
+            if (conflict != null) {
+                throw new ApiException(HttpStatus.CONFLICT, conflict);
+            }
+            selected.add(block);
+        }
+        rejectInternalBlockConflicts(selected);
+        List<ScheduleItemDto> created = new ArrayList<>();
+        for (ScheduleBlockDto block : selected) {
+            created.add(scheduleService.createFromBlock(block));
         }
         draft.setStatus(PlanDraftStatus.APPLIED);
+        draft.setAppliedScheduleItemIdsJson(writeJson(created.stream().map(ScheduleItemDto::id).toList()));
         draft.setAppliedAt(now());
         return created;
+    }
+
+    @Transactional
+    public AgentPlanDraftDto rejectPlan(Long draftId) {
+        AgentPlanDraftEntity draft = planDrafts.findById(draftId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "计划草稿不存在"));
+        if (draft.getStatus() == PlanDraftStatus.DRAFT) {
+            draft.setStatus(PlanDraftStatus.REJECTED);
+        }
+        return toDraftDto(draft);
+    }
+
+    @Transactional
+    public AgentPlanPreviewResponse previewPlan(Long draftId) {
+        AgentPlanDraftEntity draft = planDrafts.findById(draftId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "计划草稿不存在"));
+        List<ScheduleBlockDto> blocks = readBlocks(draft.getScheduleBlocksJson());
+        List<ScheduleBlockPreviewDto> previews = new ArrayList<>();
+        for (int i = 0; i < blocks.size(); i++) {
+            ScheduleBlockDto block = blocks.get(i);
+            String conflict = scheduleService.findConflictMessage(block);
+            previews.add(new ScheduleBlockPreviewDto(i, block, conflict != null, conflict));
+        }
+        return new AgentPlanPreviewResponse(draft.getId(), previews);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AgentPlanDraftDto> recentPlans() {
+        return planDrafts.findTop5ByOrderByCreatedAtDesc().stream()
+                .map(this::toDraftDto)
+                .toList();
     }
 
     private RefinedAgentRequest refineRequest(String expectedIntent, String question) {
@@ -216,6 +264,18 @@ public class AgentService {
         return conversations.save(entity);
     }
 
+    private AgentPlanDraftDto toDraftDto(AgentPlanDraftEntity draft) {
+        return new AgentPlanDraftDto(
+                draft.getId(),
+                draft.getStatus(),
+                draft.getTitle(),
+                draft.getAdvice(),
+                draft.getReasoningSummary(),
+                draft.getCreatedAt(),
+                draft.getAppliedAt()
+        );
+    }
+
     private ParsedAgentResponse parse(String raw) {
         try {
             String json = unwrapOpenAiResponse(raw);
@@ -260,6 +320,18 @@ public class AgentService {
             return objectMapper.readerForListOf(ScheduleBlockDto.class).readValue(json);
         } catch (Exception ex) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "计划草稿内容无法读取");
+        }
+    }
+
+    private List<Long> readAppliedScheduleItemIds(AgentPlanDraftEntity draft) {
+        String json = draft.getAppliedScheduleItemIdsJson();
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readerForListOf(Long.class).readValue(json);
+        } catch (Exception ex) {
+            return List.of();
         }
     }
 
@@ -333,6 +405,18 @@ public class AgentService {
             indexes.add(i);
         }
         return indexes;
+    }
+
+    private void rejectInternalBlockConflicts(List<ScheduleBlockDto> blocks) {
+        for (int i = 0; i < blocks.size(); i++) {
+            ScheduleBlockDto current = blocks.get(i);
+            for (int j = i + 1; j < blocks.size(); j++) {
+                ScheduleBlockDto next = blocks.get(j);
+                if (current.startAt().isBefore(next.endAt()) && next.startAt().isBefore(current.endAt())) {
+                    throw new ApiException(HttpStatus.CONFLICT, "计划草稿内部存在时间冲突：「" + current.title() + "」与「" + next.title() + "」。");
+                }
+            }
+        }
     }
 
     private String text(JsonNode node, String field, String fallback) {

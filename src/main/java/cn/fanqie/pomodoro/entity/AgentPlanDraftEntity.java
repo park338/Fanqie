@@ -37,6 +37,9 @@ public class AgentPlanDraftEntity {
     @Column(nullable = false, columnDefinition = "MEDIUMTEXT")
     private String rawResponse;
 
+    @Column(columnDefinition = "TEXT")
+    private String appliedScheduleItemIdsJson;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -92,6 +95,14 @@ public class AgentPlanDraftEntity {
 
     public void setRawResponse(String rawResponse) {
         this.rawResponse = rawResponse;
+    }
+
+    public String getAppliedScheduleItemIdsJson() {
+        return appliedScheduleItemIdsJson;
+    }
+
+    public void setAppliedScheduleItemIdsJson(String appliedScheduleItemIdsJson) {
+        this.appliedScheduleItemIdsJson = appliedScheduleItemIdsJson;
     }
 
     public LocalDateTime getCreatedAt() {

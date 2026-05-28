@@ -35,6 +35,13 @@ const stats = {
   recentSessions: []
 };
 
+const trend = {
+  days: [
+    { date: '2026-05-27', completedPomodoros: 1, sessions: 1, interruptions: 0, focusMinutes: 25 },
+    { date: '2026-05-28', completedPomodoros: 0, sessions: 0, interruptions: 0, focusMinutes: 0 }
+  ]
+};
+
 function json(value: unknown) {
   return Promise.resolve(new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 }
@@ -49,7 +56,19 @@ describe('App', () => {
         if (url === '/api/settings') return json(settings);
         if (url === '/api/timer') return json(timer);
         if (url === '/api/stats/today') return json(stats);
+        if (url === '/api/stats/range?days=7') return json(trend);
         if (url === '/api/schedule/today') return json([]);
+        if (url === '/api/interruptions/today') return json([]);
+        if (url === '/api/interruptions' && method === 'POST') {
+          return json({
+            id: 1,
+            note: '被会议打断',
+            taskId: 1,
+            taskTitle: '写代码',
+            timerSessionId: null,
+            occurredAt: '2026-05-28T16:30:00'
+          });
+        }
         if (url === '/api/tasks' && method === 'GET') {
           return json([
             {
@@ -135,5 +154,31 @@ describe('App', () => {
     expect(soundButton).toHaveClass('settings-sound-button');
     await user.click(soundButton);
     expect(screen.getByText('通知音测试已播放。')).toBeInTheDocument();
+  });
+
+  it('records an interruption from the timer panel', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText('25:00');
+    await user.type(screen.getByPlaceholderText('打断备注'), '被会议打断');
+    await user.click(screen.getByRole('button', { name: '记录打断' }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('/api/interruptions', expect.objectContaining({ method: 'POST' }));
+    });
+    expect(await screen.findByText(/已记录打断/)).toBeInTheDocument();
+  });
+
+  it('exposes theme, sound, and repeat reminder settings', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText('25:00');
+    await user.click(screen.getByTitle('设置'));
+
+    expect(screen.getByLabelText('主题')).toBeInTheDocument();
+    expect(screen.getByLabelText('提醒音')).toBeInTheDocument();
+    expect(screen.getByLabelText('重复提醒')).toBeInTheDocument();
   });
 });

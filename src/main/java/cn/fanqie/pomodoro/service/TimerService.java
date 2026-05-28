@@ -8,7 +8,9 @@ import cn.fanqie.pomodoro.dto.ApiDtos.TimerStateDto;
 import cn.fanqie.pomodoro.entity.SettingEntity;
 import cn.fanqie.pomodoro.entity.TaskEntity;
 import cn.fanqie.pomodoro.entity.TimerSessionEntity;
+import cn.fanqie.pomodoro.entity.TimerStateEntity;
 import cn.fanqie.pomodoro.repository.TimerSessionRepository;
+import cn.fanqie.pomodoro.repository.TimerStateRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -20,102 +22,106 @@ public class TimerService {
     private final SettingsService settingsService;
     private final TaskService taskService;
     private final TimerSessionRepository timerSessions;
+    private final TimerStateRepository timerStates;
     private final StatsService statsService;
     private final Clock clock;
-    private final TimerState state = new TimerState();
 
     public TimerService(
             SettingsService settingsService,
             TaskService taskService,
             TimerSessionRepository timerSessions,
+            TimerStateRepository timerStates,
             StatsService statsService,
             Clock clock
     ) {
         this.settingsService = settingsService;
         this.taskService = taskService;
         this.timerSessions = timerSessions;
+        this.timerStates = timerStates;
         this.statsService = statsService;
         this.clock = clock;
     }
 
     @Transactional
     public synchronized TimerStateDto current() {
-        ensureInitialized();
-        return toDto("准备好就开始一个番茄。");
+        TimerStateEntity state = getOrCreateState();
+        return toDto(state, "准备好就开始一个番茄。");
     }
 
     @Transactional
     public synchronized TimerStateDto start(TimerStartRequest request) {
-        ensureInitialized();
-        if (state.status == TimerRunStatus.PLAYING) {
-            return toDto("已经在专注中。");
+        TimerStateEntity state = getOrCreateState();
+        if (state.getStatus() == TimerRunStatus.PLAYING) {
+            return toDto(state, "已经在专注中。");
         }
-        if (request != null && request.mode() != null && state.status == TimerRunStatus.NEW) {
-            resetForMode(request.mode());
+        if (request != null && request.mode() != null && state.getStatus() == TimerRunStatus.NEW) {
+            resetForMode(state, request.mode());
         }
         LocalDateTime now = now();
-        if (state.sessionId == null) {
+        if (state.getSessionId() == null) {
             TimerSessionEntity session = new TimerSessionEntity();
-            session.setMode(state.mode);
+            session.setMode(state.getMode());
             session.setStatus(SessionStatus.RUNNING);
             session.setTask(taskService.activeTaskOrNull());
             session.setStartedAt(now);
-            session.setPlannedSeconds(state.totalSeconds);
-            session.setElapsedSeconds(state.elapsedSeconds);
+            session.setPlannedSeconds(state.getTotalSeconds());
+            session.setElapsedSeconds(state.getElapsedSeconds());
             session.setCreatedAt(now);
             session.setUpdatedAt(now);
-            state.sessionId = timerSessions.save(session).getId();
+            state.setSessionId(timerSessions.save(session).getId());
         } else {
-            TimerSessionEntity session = requireSession(state.sessionId);
+            TimerSessionEntity session = requireSession(state.getSessionId());
             session.setStatus(SessionStatus.RUNNING);
             session.touch(now);
         }
-        state.status = TimerRunStatus.PLAYING;
-        state.lastStartedAt = now;
-        return toDto(state.mode == TimerMode.POMODORO ? "小茄陪你盯住这一段。" : "休息也是计划的一部分。");
+        state.setStatus(TimerRunStatus.PLAYING);
+        state.setLastStartedAt(now);
+        state.touch(now);
+        return toDto(state, state.getMode() == TimerMode.POMODORO ? "小茄陪你盯住这一段。" : "休息也是计划的一部分。");
     }
 
     @Transactional
     public synchronized TimerStateDto pause() {
-        ensureInitialized();
-        if (state.status != TimerRunStatus.PLAYING) {
-            return toDto("当前没有运行中的计时。");
+        TimerStateEntity state = getOrCreateState();
+        if (state.getStatus() != TimerRunStatus.PLAYING) {
+            return toDto(state, "当前没有运行中的计时。");
         }
-        captureElapsed();
-        state.status = TimerRunStatus.PAUSED;
-        if (state.sessionId != null) {
-            TimerSessionEntity session = requireSession(state.sessionId);
+        captureElapsed(state);
+        state.setStatus(TimerRunStatus.PAUSED);
+        state.touch(now());
+        if (state.getSessionId() != null) {
+            TimerSessionEntity session = requireSession(state.getSessionId());
             session.setStatus(SessionStatus.PAUSED);
-            session.setElapsedSeconds(state.elapsedSeconds);
+            session.setElapsedSeconds(state.getElapsedSeconds());
             session.touch(now());
         }
-        return toDto("已暂停，回来后继续就好。");
+        return toDto(state, "已暂停，回来后继续就好。");
     }
 
     @Transactional
     public synchronized TimerStateDto reset() {
-        ensureInitialized();
-        cancelOpenSession("RESET");
-        resetForMode(state.mode);
-        return toDto("已重置当前计时。");
+        TimerStateEntity state = getOrCreateState();
+        cancelOpenSession(state, "RESET");
+        resetForMode(state, state.getMode());
+        return toDto(state, "已重置当前计时。");
     }
 
     @Transactional
     public synchronized TimerStateDto skip() {
-        ensureInitialized();
-        captureElapsed();
-        closeOpenSession(SessionStatus.SKIPPED, "SKIPPED");
-        TimerMode next = state.mode == TimerMode.POMODORO ? TimerMode.SHORT_BREAK : TimerMode.POMODORO;
-        resetForMode(next);
-        return toDto("已跳到下一段。");
+        TimerStateEntity state = getOrCreateState();
+        captureElapsed(state);
+        closeOpenSession(state, SessionStatus.SKIPPED, "SKIPPED");
+        TimerMode next = state.getMode() == TimerMode.POMODORO ? TimerMode.SHORT_BREAK : TimerMode.POMODORO;
+        resetForMode(state, next);
+        return toDto(state, "已跳到下一段。");
     }
 
     @Transactional
     public synchronized TimerStateDto complete() {
-        ensureInitialized();
-        captureElapsed();
-        TimerMode completedMode = state.mode;
-        closeOpenSession(SessionStatus.COMPLETED, "COMPLETED");
+        TimerStateEntity state = getOrCreateState();
+        captureElapsed(state);
+        TimerMode completedMode = state.getMode();
+        closeOpenSession(state, SessionStatus.COMPLETED, "COMPLETED");
         if (completedMode == TimerMode.POMODORO) {
             taskService.incrementActiveCompletedPomodoros();
             SettingEntity settings = settingsService.getOrCreate();
@@ -123,22 +129,27 @@ public class TimerService {
             TimerMode next = completed > 0 && completed % settings.getLongBreakInterval() == 0
                     ? TimerMode.LONG_BREAK
                     : TimerMode.SHORT_BREAK;
-            resetForMode(next);
-            return toDto(next == TimerMode.LONG_BREAK ? "四个番茄到手，安排一个长休息。" : "番茄完成，短休息一下。");
+            resetForMode(state, next);
+            return toDto(state, next == TimerMode.LONG_BREAK ? "四个番茄到手，安排一个长休息。" : "番茄完成，短休息一下。");
         }
-        resetForMode(TimerMode.POMODORO);
-        return toDto("休息结束，可以回到任务了。");
+        resetForMode(state, TimerMode.POMODORO);
+        return toDto(state, "休息结束，可以回到任务了。");
     }
 
-    private TimerStateDto toDto(String hint) {
-        int remaining = remainingSeconds();
+    @Transactional
+    public synchronized Long activeSessionIdOrNull() {
+        return getOrCreateState().getSessionId();
+    }
+
+    private TimerStateDto toDto(TimerStateEntity state, String hint) {
+        int remaining = remainingSeconds(state);
         TaskEntity activeTask = taskService.activeTaskOrNull();
         return new TimerStateDto(
-                state.mode,
-                state.status,
-                state.totalSeconds,
+                state.getMode(),
+                state.getStatus(),
+                state.getTotalSeconds(),
                 remaining,
-                state.sessionId,
+                state.getSessionId(),
                 activeTask == null ? null : activeTask.getId(),
                 activeTask == null ? null : activeTask.getTitle(),
                 (int) statsService.completedPomodorosToday(),
@@ -146,53 +157,61 @@ public class TimerService {
         );
     }
 
-    private void ensureInitialized() {
-        if (state.initialized) {
-            return;
-        }
-        resetForMode(TimerMode.POMODORO);
-        state.initialized = true;
+    private TimerStateEntity getOrCreateState() {
+        return timerStates.findById(TimerStateEntity.DEFAULT_ID)
+                .orElseGet(() -> {
+                    SettingEntity settings = settingsService.getOrCreate();
+                    return timerStates.save(TimerStateEntity.initial(
+                            TimerMode.POMODORO,
+                            settingsService.durationSeconds(settings, TimerMode.POMODORO),
+                            now()
+                    ));
+                });
     }
 
-    private void resetForMode(TimerMode mode) {
+    private void resetForMode(TimerStateEntity state, TimerMode mode) {
         SettingEntity settings = settingsService.getOrCreate();
-        state.mode = mode;
-        state.status = TimerRunStatus.NEW;
-        state.totalSeconds = settingsService.durationSeconds(settings, mode);
-        state.elapsedSeconds = 0;
-        state.sessionId = null;
-        state.lastStartedAt = null;
+        LocalDateTime now = now();
+        state.setMode(mode);
+        state.setStatus(TimerRunStatus.NEW);
+        state.setTotalSeconds(settingsService.durationSeconds(settings, mode));
+        state.setElapsedSeconds(0);
+        state.setSessionId(null);
+        state.setLastStartedAt(null);
+        state.touch(now);
     }
 
-    private int remainingSeconds() {
-        int elapsed = state.elapsedSeconds;
-        if (state.status == TimerRunStatus.PLAYING && state.lastStartedAt != null) {
-            elapsed += secondsSince(state.lastStartedAt, now());
+    private int remainingSeconds(TimerStateEntity state) {
+        int elapsed = state.getElapsedSeconds();
+        if (state.getStatus() == TimerRunStatus.PLAYING && state.getLastStartedAt() != null) {
+            elapsed += secondsSince(state.getLastStartedAt(), now());
         }
-        return Math.max(0, state.totalSeconds - elapsed);
+        return Math.max(0, state.getTotalSeconds() - elapsed);
     }
 
-    private void captureElapsed() {
-        if (state.status == TimerRunStatus.PLAYING && state.lastStartedAt != null) {
-            state.elapsedSeconds += secondsSince(state.lastStartedAt, now());
-            state.elapsedSeconds = Math.min(state.elapsedSeconds, state.totalSeconds);
-            state.lastStartedAt = now();
+    private void captureElapsed(TimerStateEntity state) {
+        if (state.getStatus() == TimerRunStatus.PLAYING && state.getLastStartedAt() != null) {
+            LocalDateTime now = now();
+            int elapsed = state.getElapsedSeconds() + secondsSince(state.getLastStartedAt(), now);
+            state.setElapsedSeconds(Math.min(elapsed, state.getTotalSeconds()));
+            state.setLastStartedAt(now);
+            state.touch(now);
         }
     }
 
-    private void cancelOpenSession(String reason) {
-        captureElapsed();
-        closeOpenSession(SessionStatus.CANCELLED, reason);
+    private void cancelOpenSession(TimerStateEntity state, String reason) {
+        captureElapsed(state);
+        closeOpenSession(state, SessionStatus.CANCELLED, reason);
     }
 
-    private void closeOpenSession(SessionStatus status, String reason) {
-        if (state.sessionId == null) {
+    private void closeOpenSession(TimerStateEntity state, SessionStatus status, String reason) {
+        if (state.getSessionId() == null) {
             return;
         }
         LocalDateTime now = now();
-        TimerSessionEntity session = requireSession(state.sessionId);
+        TimerSessionEntity session = requireSession(state.getSessionId());
         session.setStatus(status);
-        session.setElapsedSeconds(status == SessionStatus.COMPLETED ? session.getPlannedSeconds() : state.elapsedSeconds);
+        session.setElapsedSeconds(status == SessionStatus.COMPLETED ? session.getPlannedSeconds() : state.getElapsedSeconds());
         session.setEndedAt(now);
         session.setCompletionReason(reason);
         session.touch(now);
@@ -210,15 +229,5 @@ public class TimerService {
 
     private LocalDateTime now() {
         return LocalDateTime.now(clock);
-    }
-
-    private static final class TimerState {
-        private boolean initialized;
-        private TimerMode mode;
-        private TimerRunStatus status;
-        private int totalSeconds;
-        private int elapsedSeconds;
-        private Long sessionId;
-        private LocalDateTime lastStartedAt;
     }
 }

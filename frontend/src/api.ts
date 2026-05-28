@@ -1,9 +1,12 @@
 import type {
   AgentAdvice,
   AgentPlan,
+  AgentPlanPreview,
+  Interruption,
   ScheduleItem,
   Settings,
   Stats,
+  StatsTrend,
   Task,
   TimerMode,
   TimerState
@@ -61,10 +64,16 @@ export const api = {
   deleteSchedule: (id: number) => request<void>(`/api/schedule/today/${id}`, { method: 'DELETE' }),
 
   stats: () => request<Stats>('/api/stats/today'),
+  statsTrend: (days = 7) => request<StatsTrend>(`/api/stats/range?days=${days}`),
+  interruptionsToday: () => request<Interruption[]>('/api/interruptions/today'),
+  recordInterruption: (note: string) =>
+    request<Interruption>('/api/interruptions', { method: 'POST', body: JSON.stringify({ note }) }),
   advice: (question: string) =>
     request<AgentAdvice>('/api/agent/advice', { method: 'POST', body: JSON.stringify({ question }) }),
   plan: (question: string) =>
     request<AgentPlan>('/api/agent/plan', { method: 'POST', body: JSON.stringify({ question }) }),
+  previewPlan: (draftId: number) => request<AgentPlanPreview>(`/api/agent/plan/${draftId}/preview`),
+  rejectPlan: (draftId: number) => request(`/api/agent/plan/${draftId}/reject`, { method: 'POST' }),
   applyPlan: (draftId: number, blockIndexes?: number[]) =>
     request<ScheduleItem[]>(`/api/agent/plan/${draftId}/apply`, {
       method: 'POST',

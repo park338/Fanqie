@@ -66,6 +66,27 @@ export interface Stats {
   }>;
 }
 
+export interface DailyStats {
+  date: string;
+  completedPomodoros: number;
+  sessions: number;
+  interruptions: number;
+  focusMinutes: number;
+}
+
+export interface StatsTrend {
+  days: DailyStats[];
+}
+
+export interface Interruption {
+  id: number;
+  note: string;
+  taskId: number | null;
+  taskTitle: string | null;
+  timerSessionId: number | null;
+  occurredAt: string;
+}
+
 export interface ScheduleBlock {
   title: string;
   startAt: string;
@@ -88,4 +109,16 @@ export interface AgentPlan {
   reasoningSummary: string;
   blocks: ScheduleBlock[];
   warnings: string[];
+}
+
+export interface ScheduleBlockPreview {
+  index: number;
+  block: ScheduleBlock;
+  conflict: boolean;
+  conflictMessage: string | null;
+}
+
+export interface AgentPlanPreview {
+  draftId: number;
+  blocks: ScheduleBlockPreview[];
 }

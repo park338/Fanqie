@@ -1,9 +1,11 @@
 package cn.fanqie.pomodoro.web;
 
 import cn.fanqie.pomodoro.dto.ApiDtos.StatsResponse;
+import cn.fanqie.pomodoro.dto.ApiDtos.StatsTrendResponse;
 import cn.fanqie.pomodoro.service.StatsService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -18,5 +20,10 @@ public class StatsController {
     @GetMapping("/today")
     public StatsResponse today() {
         return stats.today();
+    }
+
+    @GetMapping("/range")
+    public StatsTrendResponse range(@RequestParam(defaultValue = "7") int days) {
+        return stats.trend(days);
     }
 }
