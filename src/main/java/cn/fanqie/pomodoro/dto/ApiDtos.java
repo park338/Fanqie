@@ -5,6 +5,7 @@ import cn.fanqie.pomodoro.domain.ScheduleSource;
 import cn.fanqie.pomodoro.domain.ScheduleStatus;
 import cn.fanqie.pomodoro.domain.TimerMode;
 import cn.fanqie.pomodoro.domain.TimerRunStatus;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -189,6 +190,67 @@ public final class ApiDtos {
             String advice,
             String reasoningSummary,
             List<ScheduleBlockDto> blocks,
+            List<String> warnings
+    ) {
+    }
+
+    public record TimeMasterHabitsDto(
+            @NotBlank @Size(max = 32) String energy,
+            @NotBlank @Size(max = 32) String focusStyle,
+            @NotBlank @Size(max = 32) String restPattern,
+            @NotBlank @Size(max = 32) String reviewPreference
+    ) {
+    }
+
+    public record TimeMasterPlanRequest(
+            @NotBlank @Size(max = 255) String taskTitle,
+            @NotBlank @Size(max = 2000) String taskContent,
+            @NotNull LocalDate startDate,
+            @NotNull LocalDate endDate,
+            @Min(25) @Max(360) int dailyMinutes,
+            @Valid @NotNull TimeMasterHabitsDto habits
+    ) {
+    }
+
+    public record TimeMasterForecastPointDto(
+            @NotNull LocalDate date,
+            @Min(1) int day,
+            @Min(0) @Max(100) int value,
+            @NotBlank @Size(max = 64) String phaseId
+    ) {
+    }
+
+    public record TimeMasterDailyPlanDto(
+            @NotNull LocalDate date,
+            @NotBlank @Size(max = 255) String title,
+            @Min(1) @Max(360) int focusMinutes,
+            @NotBlank @Size(max = 32) String timeBlock,
+            List<String> checklist,
+            @NotBlank @Size(max = 255) String scheduleTitle,
+            @Size(max = 2000) String scheduleNotes
+    ) {
+    }
+
+    public record TimeMasterPhaseDto(
+            @NotBlank @Size(max = 64) String id,
+            @NotBlank @Size(max = 80) String name,
+            @NotNull LocalDate startDate,
+            @NotNull LocalDate endDate,
+            @NotBlank @Size(max = 500) String objective,
+            List<TimeMasterDailyPlanDto> dailyPlans,
+            List<TimeMasterForecastPointDto> forecast
+    ) {
+    }
+
+    public record TimeMasterPlanResponse(
+            @NotBlank @Size(max = 255) String title,
+            @NotBlank @Size(max = 2000) String summary,
+            @Min(1) int totalDays,
+            @Min(25) @Max(360) int dailyMinutes,
+            @NotNull TimeMasterHabitsDto habits,
+            List<TimeMasterPhaseDto> phases,
+            List<TimeMasterForecastPointDto> forecast,
+            @NotBlank @Size(max = 2000) String rationale,
             List<String> warnings
     ) {
     }

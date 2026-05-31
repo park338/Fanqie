@@ -57,6 +57,18 @@ describe('App', () => {
         if (url === '/api/timer') return json(timer);
         if (url === '/api/stats/today') return json(stats);
         if (url === '/api/stats/range?days=7') return json(trend);
+        if (url === '/api/schedule/today' && method === 'POST') {
+          return json({
+            id: 99,
+            title: '启动校准 D1: 完成作品集',
+            startAt: '2026-06-01T08:30',
+            endAt: '2026-06-01T10:00',
+            status: 'PLANNED',
+            source: 'AGENT',
+            taskId: null,
+            notes: '来自时间管理大师'
+          });
+        }
         if (url === '/api/schedule/today') return json([]);
         if (url === '/api/interruptions/today') return json([]);
         if (url === '/api/interruptions' && method === 'POST') {
@@ -67,6 +79,44 @@ describe('App', () => {
             taskTitle: '写代码',
             timerSessionId: null,
             occurredAt: '2026-05-28T16:30:00'
+          });
+        }
+        if (url === '/api/agent/time-master' && method === 'POST') {
+          return json({
+            title: 'LLM 作品集长期资料卡',
+            summary: '小茄根据早间深度工作习惯生成的周期规划。',
+            totalDays: 14,
+            dailyMinutes: 90,
+            habits: {
+              energy: 'morning',
+              focusStyle: 'deep',
+              restPattern: 'weekend-light',
+              reviewPreference: 'weekly'
+            },
+            phases: [
+              {
+                id: 'calibrate',
+                name: 'AI 拆出的启动阶段',
+                startDate: '2026-06-01',
+                endDate: '2026-06-03',
+                objective: '先校准作品集范围和素材。',
+                dailyPlans: [
+                  {
+                    date: '2026-06-01',
+                    title: '筛选代表项目',
+                    focusMinutes: 90,
+                    timeBlock: '08:30-10:00',
+                    checklist: ['列出候选项目', '选出三个代表案例'],
+                    scheduleTitle: '作品集：筛选代表项目',
+                    scheduleNotes: '来自 LLM 的第一天安排'
+                  }
+                ],
+                forecast: [{ date: '2026-06-01', day: 1, value: 7, phaseId: 'calibrate' }]
+              }
+            ],
+            forecast: [{ date: '2026-06-01', day: 1, value: 7, phaseId: 'calibrate' }],
+            rationale: '先校准范围，再稳定推进，可以减少长期任务失焦。',
+            warnings: []
           });
         }
         if (url === '/api/tasks' && method === 'GET') {
@@ -180,5 +230,46 @@ describe('App', () => {
     expect(screen.getByLabelText('主题')).toBeInTheDocument();
     expect(screen.getByLabelText('提醒音')).toBeInTheDocument();
     expect(screen.getByLabelText('重复提醒')).toBeInTheDocument();
+  });
+
+  it('creates a time master plan and adds a daily plan to the home schedule', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText('25:00');
+    await user.click(screen.getByRole('button', { name: '时间管理大师' }));
+
+    expect(await screen.findByText('你通常哪段时间最适合处理难任务？')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /早上/ }));
+    await user.click(screen.getByRole('button', { name: /整块深度/ }));
+    await user.click(screen.getByRole('button', { name: /轻量维护/ }));
+    await user.click(screen.getByRole('button', { name: /每周复盘/ }));
+
+    await user.clear(screen.getByLabelText('任务名称'));
+    await user.type(screen.getByLabelText('任务名称'), '完成作品集');
+    await user.clear(screen.getByLabelText('任务内容'));
+    await user.type(screen.getByLabelText('任务内容'), '整理项目、补文档、发布站点');
+    await user.clear(screen.getByLabelText('开始日期'));
+    await user.type(screen.getByLabelText('开始日期'), '2026-06-01');
+    await user.clear(screen.getByLabelText('结束日期'));
+    await user.type(screen.getByLabelText('结束日期'), '2026-06-14');
+    await user.click(screen.getByRole('button', { name: '生成资料卡片' }));
+
+    expect(await screen.findByText('LLM 作品集长期资料卡')).toBeInTheDocument();
+    expect(screen.getAllByText('AI 拆出的启动阶段').length).toBeGreaterThan(0);
+    expect(screen.getByText('线性提升预测')).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/agent/time-master',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('完成作品集')
+      })
+    );
+
+    await user.click(screen.getAllByRole('button', { name: '加入首页安排' })[0]);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('/api/schedule/today', expect.objectContaining({ method: 'POST' }));
+    });
   });
 });

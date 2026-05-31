@@ -11,6 +11,7 @@ import type {
   TimerMode,
   TimerState
 } from './types';
+import type { TimeMasterInput, TimeMasterPlan } from './timeMaster';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -72,6 +73,8 @@ export const api = {
     request<AgentAdvice>('/api/agent/advice', { method: 'POST', body: JSON.stringify({ question }) }),
   plan: (question: string) =>
     request<AgentPlan>('/api/agent/plan', { method: 'POST', body: JSON.stringify({ question }) }),
+  timeMasterPlan: (input: TimeMasterInput) =>
+    request<TimeMasterPlan>('/api/agent/time-master', { method: 'POST', body: JSON.stringify(input) }),
   previewPlan: (draftId: number) => request<AgentPlanPreview>(`/api/agent/plan/${draftId}/preview`),
   rejectPlan: (draftId: number) => request(`/api/agent/plan/${draftId}/reject`, { method: 'POST' }),
   applyPlan: (draftId: number, blockIndexes?: number[]) =>

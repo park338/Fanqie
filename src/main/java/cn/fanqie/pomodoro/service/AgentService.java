@@ -12,6 +12,12 @@ import cn.fanqie.pomodoro.dto.ApiDtos.ApplyPlanRequest;
 import cn.fanqie.pomodoro.dto.ApiDtos.ScheduleBlockDto;
 import cn.fanqie.pomodoro.dto.ApiDtos.ScheduleBlockPreviewDto;
 import cn.fanqie.pomodoro.dto.ApiDtos.ScheduleItemDto;
+import cn.fanqie.pomodoro.dto.ApiDtos.TimeMasterDailyPlanDto;
+import cn.fanqie.pomodoro.dto.ApiDtos.TimeMasterForecastPointDto;
+import cn.fanqie.pomodoro.dto.ApiDtos.TimeMasterHabitsDto;
+import cn.fanqie.pomodoro.dto.ApiDtos.TimeMasterPhaseDto;
+import cn.fanqie.pomodoro.dto.ApiDtos.TimeMasterPlanRequest;
+import cn.fanqie.pomodoro.dto.ApiDtos.TimeMasterPlanResponse;
 import cn.fanqie.pomodoro.entity.AgentConversationEntity;
 import cn.fanqie.pomodoro.entity.AgentPlanDraftEntity;
 import cn.fanqie.pomodoro.repository.AgentConversationRepository;
@@ -24,6 +30,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -47,6 +54,20 @@ public class AgentService {
             只能返回 JSON 对象，字段为 title、advice、reasoningSummary、blocks、warnings。
             blocks 是今日计划块数组，每项包含 title、startAt、endAt、notes、taskId；时间必须是 ISO-8601 本地时间。
             不要编造已经完成的工作；如果信息不足，请给保守建议。
+            """;
+
+    private static final String TIME_MASTER_PROMPT = """
+            你是 Fanqie 的“时间管理大师”长期任务规划 agent。
+            你的任务是根据用户的生活习惯、任务内容、开始日期、结束日期和每日可投入时间，生成可执行的长期任务资料卡。
+            必须用简体中文，只能返回 JSON 对象，不要返回 Markdown。
+            JSON 字段必须为 title、summary、totalDays、dailyMinutes、habits、phases、forecast、rationale、warnings。
+            habits 必须原样返回 energy、focusStyle、restPattern、reviewPreference。
+            phases 是阶段数组，每项必须包含 id、name、startDate、endDate、objective、dailyPlans、forecast。
+            dailyPlans 是每日计划数组，每项必须包含 date、title、focusMinutes、timeBlock、checklist、scheduleTitle、scheduleNotes。
+            timeBlock 必须使用 HH:mm-HH:mm；date、startDate、endDate 必须使用 YYYY-MM-DD。
+            forecast 是线性提升预测点数组，每项包含 date、day、value、phaseId；value 使用 0 到 100 的整数，最后一个点必须是 100。
+            rationale 要解释为什么这样拆阶段、安排强度和复盘节奏。
+            不要声称用户已经完成某项工作，不要编造用户没有提供的固定日程。
             """;
 
     private final LlmClient llm;
@@ -115,6 +136,15 @@ public class AgentService {
         draft = planDrafts.save(draft);
         saveConversation(AgentKind.PLAN, question, parsed.advice(), raw);
         return new AgentPlanResponse(draft.getId(), parsed.title(), parsed.advice(), parsed.reasoningSummary(), parsed.blocks(), mergeWarnings(refined.warnings(), parsed.warnings()));
+    }
+
+    @Transactional
+    public TimeMasterPlanResponse timeMaster(TimeMasterPlanRequest request) {
+        rejectInvalidTimeMasterRequest(request);
+        String raw = llm.chat(TIME_MASTER_PROMPT, timeMasterContextPrompt(request));
+        TimeMasterPlanResponse response = parseTimeMaster(raw, request);
+        saveConversation(AgentKind.TIME_MASTER, timeMasterUserMessage(request), response.summary(), raw);
+        return response;
     }
 
     @Transactional
@@ -254,6 +284,61 @@ public class AgentService {
         );
     }
 
+    private void rejectInvalidTimeMasterRequest(TimeMasterPlanRequest request) {
+        if (request.endDate().isBefore(request.startDate())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "结束日期不能早于开始日期");
+        }
+        long totalDays = ChronoUnit.DAYS.between(request.startDate(), request.endDate()) + 1;
+        if (totalDays > 180) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "时间管理大师暂时支持 180 天以内的长期任务");
+        }
+    }
+
+    private String timeMasterContextPrompt(TimeMasterPlanRequest request) {
+        return """
+                当前时间: %s
+                任务名称: %s
+                任务内容: %s
+                开始日期: %s
+                结束日期: %s
+                总天数: %d
+                每日可投入分钟: %d
+                用户习惯:
+                - energy: %s
+                - focusStyle: %s
+                - restPattern: %s
+                - reviewPreference: %s
+
+                请基于以上输入给出阶段拆分、每日计划、线性提升预测和规划原因。
+                每个 dailyPlans 项都要能直接加入首页时间安排：scheduleTitle 要像日程标题，scheduleNotes 要说明当天动作和安排理由。
+                """.formatted(
+                now(),
+                request.taskTitle().trim(),
+                request.taskContent().trim(),
+                request.startDate(),
+                request.endDate(),
+                totalTimeMasterDays(request),
+                request.dailyMinutes(),
+                request.habits().energy(),
+                request.habits().focusStyle(),
+                request.habits().restPattern(),
+                request.habits().reviewPreference()
+        );
+    }
+
+    private String timeMasterUserMessage(TimeMasterPlanRequest request) {
+        return "%s｜%s 到 %s｜每日 %d 分钟".formatted(
+                request.taskTitle().trim(),
+                request.startDate(),
+                request.endDate(),
+                request.dailyMinutes()
+        );
+    }
+
+    private int totalTimeMasterDays(TimeMasterPlanRequest request) {
+        return (int) ChronoUnit.DAYS.between(request.startDate(), request.endDate()) + 1;
+    }
+
     private AgentConversationEntity saveConversation(AgentKind kind, String userMessage, String summary, String raw) {
         AgentConversationEntity entity = new AgentConversationEntity();
         entity.setKind(kind);
@@ -295,6 +380,163 @@ public class AgentService {
                     List.of("AI 返回内容无法解析为计划 JSON")
             );
         }
+    }
+
+    private TimeMasterPlanResponse parseTimeMaster(String raw, TimeMasterPlanRequest request) {
+        try {
+            String json = unwrapOpenAiResponse(raw);
+            JsonNode node = objectMapper.readTree(json);
+            List<TimeMasterPhaseDto> phases = readTimeMasterPhasesNode(node.get("phases"));
+            if (phases.isEmpty()) {
+                throw new IllegalArgumentException("missing phases");
+            }
+            List<TimeMasterForecastPointDto> forecast = readTimeMasterForecastNode(node.get("forecast"));
+            if (forecast.isEmpty()) {
+                forecast = phases.stream().flatMap(phase -> phase.forecast().stream()).toList();
+            }
+            return new TimeMasterPlanResponse(
+                    cleanText(text(node, "title", request.taskTitle()), request.taskTitle(), 255),
+                    cleanText(text(node, "summary", request.taskContent()), request.taskContent(), 2000),
+                    intValue(node, "totalDays", totalTimeMasterDays(request)),
+                    intValue(node, "dailyMinutes", request.dailyMinutes()),
+                    readTimeMasterHabits(node.get("habits"), request.habits()),
+                    phases,
+                    forecast,
+                    cleanText(text(node, "rationale", "根据任务周期、每日投入和习惯偏好拆分阶段，并保留复盘与交付缓冲。"), "根据任务周期、每日投入和习惯偏好拆分阶段，并保留复盘与交付缓冲。", 2000),
+                    readLimitedStringList(node.get("warnings"))
+            );
+        } catch (Exception ex) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "时间管理大师返回内容无法解析，请稍后重试");
+        }
+    }
+
+    private TimeMasterHabitsDto readTimeMasterHabits(JsonNode node, TimeMasterHabitsDto fallback) {
+        if (node == null || !node.isObject()) {
+            return fallback;
+        }
+        return new TimeMasterHabitsDto(
+                cleanText(text(node, "energy", fallback.energy()), fallback.energy(), 32),
+                cleanText(text(node, "focusStyle", fallback.focusStyle()), fallback.focusStyle(), 32),
+                cleanText(text(node, "restPattern", fallback.restPattern()), fallback.restPattern(), 32),
+                cleanText(text(node, "reviewPreference", fallback.reviewPreference()), fallback.reviewPreference(), 32)
+        );
+    }
+
+    private List<TimeMasterPhaseDto> readTimeMasterPhasesNode(JsonNode node) {
+        if (node == null || !node.isArray()) {
+            return Collections.emptyList();
+        }
+        List<TimeMasterPhaseDto> phases = new ArrayList<>();
+        for (JsonNode item : node) {
+            try {
+                TimeMasterPhaseDto phase = objectMapper.treeToValue(item, TimeMasterPhaseDto.class);
+                if (phase.endDate().isBefore(phase.startDate())) {
+                    continue;
+                }
+                phases.add(new TimeMasterPhaseDto(
+                        cleanText(phase.id(), "phase-" + (phases.size() + 1), 64),
+                        cleanText(phase.name(), "阶段 " + (phases.size() + 1), 80),
+                        phase.startDate(),
+                        phase.endDate(),
+                        cleanText(phase.objective(), "推进当前阶段目标。", 500),
+                        sanitizeDailyPlans(phase.dailyPlans()),
+                        sanitizeForecast(phase.forecast())
+                ));
+            } catch (Exception ignored) {
+                // Skip malformed phases while preserving any valid LLM-generated parts.
+            }
+        }
+        return phases;
+    }
+
+    private List<TimeMasterDailyPlanDto> sanitizeDailyPlans(List<TimeMasterDailyPlanDto> plans) {
+        if (plans == null) {
+            return Collections.emptyList();
+        }
+        List<TimeMasterDailyPlanDto> sanitized = new ArrayList<>();
+        for (TimeMasterDailyPlanDto plan : plans) {
+            if (plan == null || plan.date() == null) {
+                continue;
+            }
+            sanitized.add(new TimeMasterDailyPlanDto(
+                    plan.date(),
+                    cleanText(plan.title(), "每日推进", 255),
+                    clamp(plan.focusMinutes(), 1, 360),
+                    cleanText(plan.timeBlock(), "08:30-09:30", 32),
+                    cleanStringList(plan.checklist(), 8, 160),
+                    cleanText(plan.scheduleTitle(), plan.title(), 255),
+                    cleanText(plan.scheduleNotes(), "来自时间管理大师的长期任务安排。", 2000)
+            ));
+        }
+        return sanitized;
+    }
+
+    private List<TimeMasterForecastPointDto> readTimeMasterForecastNode(JsonNode node) {
+        if (node == null || !node.isArray()) {
+            return Collections.emptyList();
+        }
+        List<TimeMasterForecastPointDto> points = new ArrayList<>();
+        for (JsonNode item : node) {
+            try {
+                TimeMasterForecastPointDto point = objectMapper.treeToValue(item, TimeMasterForecastPointDto.class);
+                if (point.date() != null && point.phaseId() != null && !point.phaseId().isBlank()) {
+                    points.add(new TimeMasterForecastPointDto(
+                            point.date(),
+                            Math.max(1, point.day()),
+                            clamp(point.value(), 0, 100),
+                            cleanText(point.phaseId(), "phase", 64)
+                    ));
+                }
+            } catch (Exception ignored) {
+                // Skip malformed forecast points while preserving the rest.
+            }
+        }
+        return points;
+    }
+
+    private List<TimeMasterForecastPointDto> sanitizeForecast(List<TimeMasterForecastPointDto> points) {
+        if (points == null) {
+            return Collections.emptyList();
+        }
+        List<TimeMasterForecastPointDto> sanitized = new ArrayList<>();
+        for (TimeMasterForecastPointDto point : points) {
+            if (point == null || point.date() == null || point.phaseId() == null || point.phaseId().isBlank()) {
+                continue;
+            }
+            sanitized.add(new TimeMasterForecastPointDto(
+                    point.date(),
+                    Math.max(1, point.day()),
+                    clamp(point.value(), 0, 100),
+                    cleanText(point.phaseId(), "phase", 64)
+            ));
+        }
+        return sanitized;
+    }
+
+    private List<String> cleanStringList(List<String> values, int maxItems, int maxLength) {
+        if (values == null) {
+            return Collections.emptyList();
+        }
+        List<String> cleaned = new ArrayList<>();
+        for (String value : values) {
+            String item = cleanText(value, "", maxLength);
+            if (!item.isBlank()) {
+                cleaned.add(item);
+            }
+            if (cleaned.size() >= maxItems) {
+                break;
+            }
+        }
+        return cleaned;
+    }
+
+    private int intValue(JsonNode node, String field, int fallback) {
+        JsonNode value = node.get(field);
+        return value != null && value.canConvertToInt() ? value.asInt() : fallback;
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private String unwrapOpenAiResponse(String raw) throws JsonProcessingException {
@@ -384,7 +626,7 @@ public class AgentService {
     private String cleanText(String value, String fallback, int maxLength) {
         String cleaned = value == null ? "" : value.trim();
         if (cleaned.isBlank()) {
-            cleaned = fallback;
+            cleaned = fallback == null ? "" : fallback;
         }
         if (cleaned.length() > maxLength) {
             return cleaned.substring(0, maxLength);

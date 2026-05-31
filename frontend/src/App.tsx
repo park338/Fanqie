@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { CSSProperties, FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { scheduleTimesForDailyPlan } from './timeMaster';
 import type {
   AgentPlan,
   Interruption,
@@ -40,6 +41,11 @@ import type {
   TimerMode,
   TimerState
 } from './types';
+import type {
+  TimeMasterDailyPlan,
+  TimeMasterHabits,
+  TimeMasterPlan
+} from './timeMaster';
 
 const defaultSettings: Settings = {
   workMinutes: 25,
@@ -83,6 +89,66 @@ interface ChatMessage {
   warnings?: string[];
 }
 
+type AppPage = 'HOME' | 'TIME_MASTER';
+
+interface TimeMasterQuestion<T extends keyof TimeMasterHabits> {
+  id: T;
+  eyebrow: string;
+  title: string;
+  options: Array<{ value: TimeMasterHabits[T]; label: string; description: string }>;
+}
+
+interface TimeMasterFormState {
+  taskTitle: string;
+  taskContent: string;
+  startDate: string;
+  endDate: string;
+  dailyMinutes: number;
+}
+
+const timeMasterQuestions: TimeMasterQuestion<keyof TimeMasterHabits>[] = [
+  {
+    id: 'energy',
+    eyebrow: '精力节律',
+    title: '你通常哪段时间最适合处理难任务？',
+    options: [
+      { value: 'morning', label: '早上', description: '把关键推进放在上午' },
+      { value: 'afternoon', label: '下午', description: '适合稳定执行和协作' },
+      { value: 'evening', label: '晚上', description: '适合安静深度处理' }
+    ]
+  },
+  {
+    id: 'focusStyle',
+    eyebrow: '专注方式',
+    title: '你更习惯怎样完成一段长期任务？',
+    options: [
+      { value: 'deep', label: '整块深度', description: '每天安排较完整的专注块' },
+      { value: 'balanced', label: '稳步推进', description: '强度均衡，便于持续' },
+      { value: 'fragmented', label: '碎片拼接', description: '拆成更小的每日动作' }
+    ]
+  },
+  {
+    id: 'restPattern',
+    eyebrow: '休息策略',
+    title: '休息日应该如何参与计划？',
+    options: [
+      { value: 'weekend-light', label: '轻量维护', description: '周末降载，保留连续性' },
+      { value: 'steady', label: '强度稳定', description: '每天保持接近投入' },
+      { value: 'weekday-only', label: '工作日为主', description: '休息日只做复盘检查' }
+    ]
+  },
+  {
+    id: 'reviewPreference',
+    eyebrow: '复盘频率',
+    title: '你希望系统多久提醒你调整方向？',
+    options: [
+      { value: 'weekly', label: '每周复盘', description: '适合多数长任务节奏' },
+      { value: 'daily', label: '每天复盘', description: '适合变化快的任务' },
+      { value: 'milestone', label: '阶段复盘', description: '适合目标清晰的项目' }
+    ]
+  }
+];
+
 function formatSeconds(seconds: number) {
   const safe = Math.max(0, seconds);
   const minutes = Math.floor(safe / 60).toString().padStart(2, '0');
@@ -93,6 +159,35 @@ function formatSeconds(seconds: number) {
 function toInputDateTime(value: Date) {
   const offset = value.getTimezoneOffset() * 60000;
   return new Date(value.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function toInputDate(value: Date) {
+  return toInputDateTime(value).slice(0, 10);
+}
+
+function addInputDays(value: string, days: number) {
+  const [year, month, day] = value.split('-').map(Number);
+  return toInputDate(new Date(year, month - 1, day + days));
+}
+
+function defaultTimeMasterForm(): TimeMasterFormState {
+  const startDate = toInputDate(new Date());
+  return {
+    taskTitle: '完成一个长期任务',
+    taskContent: '明确目标、阶段推进、每日执行、复盘交付',
+    startDate,
+    endDate: addInputDays(startDate, 13),
+    dailyMinutes: 90
+  };
+}
+
+function resolveTimeMasterHabits(habits: Partial<TimeMasterHabits>): TimeMasterHabits {
+  return {
+    energy: habits.energy ?? 'morning',
+    focusStyle: habits.focusStyle ?? 'balanced',
+    restPattern: habits.restPattern ?? 'weekend-light',
+    reviewPreference: habits.reviewPreference ?? 'weekly'
+  };
 }
 
 function modeDuration(settings: Settings, mode: TimerMode) {
@@ -138,6 +233,7 @@ function emptyScheduleForm(): Omit<ScheduleItem, 'id'> {
 }
 
 export default function App() {
+  const [activePage, setActivePage] = useState<AppPage>('HOME');
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [settingsDraft, setSettingsDraft] = useState<Settings>(defaultSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -156,6 +252,12 @@ export default function App() {
   const [scheduleEditForm, setScheduleEditForm] = useState<Omit<ScheduleItem, 'id'>>(emptyScheduleForm);
   const [interruptionNote, setInterruptionNote] = useState('');
   const [scheduleNotice, setScheduleNotice] = useState<string | null>(null);
+  const [timeMasterStep, setTimeMasterStep] = useState(0);
+  const [timeMasterHabits, setTimeMasterHabits] = useState<Partial<TimeMasterHabits>>({});
+  const [timeMasterForm, setTimeMasterForm] = useState<TimeMasterFormState>(() => defaultTimeMasterForm());
+  const [timeMasterPlan, setTimeMasterPlan] = useState<TimeMasterPlan | null>(null);
+  const [selectedTimeMasterPhase, setSelectedTimeMasterPhase] = useState(0);
+  const [timeMasterRationaleOpen, setTimeMasterRationaleOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentMode, setAgentMode] = useState<AgentMode>('ADVICE');
   const [agentInput, setAgentInput] = useState('');
@@ -578,6 +680,273 @@ export default function App() {
     });
   }
 
+  function switchPage(page: AppPage) {
+    setActivePage(page);
+    setAgentOpen(false);
+    setTimeMasterRationaleOpen(false);
+  }
+
+  function answerTimeMasterQuestion(id: keyof TimeMasterHabits, value: string) {
+    setTimeMasterHabits((current) => ({ ...current, [id]: value }));
+    setTimeMasterStep((step) => Math.min(step + 1, timeMasterQuestions.length));
+  }
+
+  function resetTimeMaster() {
+    setTimeMasterStep(0);
+    setTimeMasterHabits({});
+    setTimeMasterForm(defaultTimeMasterForm());
+    setTimeMasterPlan(null);
+    setSelectedTimeMasterPhase(0);
+    setTimeMasterRationaleOpen(false);
+  }
+
+  async function submitTimeMasterTask(event: FormEvent) {
+    event.preventDefault();
+    try {
+      setBusy(true);
+      setError(null);
+      const nextPlan = await api.timeMasterPlan({
+        ...timeMasterForm,
+        habits: resolveTimeMasterHabits(timeMasterHabits)
+      });
+      setTimeMasterPlan(nextPlan);
+      setSelectedTimeMasterPhase(0);
+      setTimeMasterRationaleOpen(false);
+    } catch (ex) {
+      setError(ex instanceof Error ? ex.message : '时间管理大师生成失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addTimeMasterDayToSchedule(day: TimeMasterDailyPlan) {
+    const { startAt, endAt } = scheduleTimesForDailyPlan(day);
+    await run(
+      () =>
+        api.createSchedule({
+          title: day.scheduleTitle,
+          startAt,
+          endAt,
+          status: 'PLANNED',
+          source: 'AGENT',
+          taskId: null,
+          notes: day.scheduleNotes
+        }),
+      async () => {
+        setScheduleNotice(`${day.date} 已加入首页时间安排`);
+        setSchedule(await api.scheduleToday());
+      }
+    );
+  }
+
+  function forecastPolyline(points: TimeMasterPlan['forecast'], width = 620, height = 170) {
+    const total = Math.max(1, points.length - 1);
+    return points
+      .map((point, index) => {
+        const x = 20 + (index / total) * width;
+        const y = 20 + height - (point.value / 100) * height;
+        return `${Math.round(x)},${Math.round(y)}`;
+      })
+      .join(' ');
+  }
+
+  function renderTimeMasterPage() {
+    if (!timeMasterPlan && timeMasterStep < timeMasterQuestions.length) {
+      const question = timeMasterQuestions[timeMasterStep];
+      const progress = Math.round(((timeMasterStep + 1) / (timeMasterQuestions.length + 1)) * 100);
+      return (
+        <section className="time-master-page">
+          <div className="tm-progress" aria-label="生成进度">
+            <span><i style={{ width: `${progress}%` }} /></span>
+            <strong>{progress}%</strong>
+          </div>
+          <section className="tm-question-card">
+            <p>{question.eyebrow}</p>
+            <h2>{question.title}</h2>
+            <div className="tm-option-grid">
+              {question.options.map((option) => (
+                <button key={option.value} type="button" onClick={() => answerTimeMasterQuestion(question.id, option.value)}>
+                  <strong>{option.label}</strong>
+                  <span>{option.description}</span>
+                </button>
+              ))}
+            </div>
+            {timeMasterStep > 0 && (
+              <button className="command compact" type="button" onClick={() => setTimeMasterStep((step) => Math.max(0, step - 1))}>
+                上一步
+              </button>
+            )}
+          </section>
+        </section>
+      );
+    }
+
+    if (!timeMasterPlan) {
+      return (
+        <section className="time-master-page">
+          <form className="tm-task-form" onSubmit={submitTimeMasterTask}>
+            <div>
+              <p>任务信息</p>
+              <h2>把长期目标交给时间管理大师拆解</h2>
+            </div>
+            <label>
+              任务名称
+              <input
+                value={timeMasterForm.taskTitle}
+                onChange={(event) => setTimeMasterForm({ ...timeMasterForm, taskTitle: event.target.value })}
+              />
+            </label>
+            <label>
+              任务内容
+              <textarea
+                value={timeMasterForm.taskContent}
+                onChange={(event) => setTimeMasterForm({ ...timeMasterForm, taskContent: event.target.value })}
+              />
+            </label>
+            <div className="tm-form-grid">
+              <label>
+                开始日期
+                <input
+                  type="date"
+                  value={timeMasterForm.startDate}
+                  onChange={(event) => setTimeMasterForm({ ...timeMasterForm, startDate: event.target.value })}
+                />
+              </label>
+              <label>
+                结束日期
+                <input
+                  type="date"
+                  value={timeMasterForm.endDate}
+                  onChange={(event) => setTimeMasterForm({ ...timeMasterForm, endDate: event.target.value })}
+                />
+              </label>
+              <label>
+                每日可投入分钟
+                <input
+                  type="number"
+                  min={25}
+                  max={360}
+                  value={timeMasterForm.dailyMinutes}
+                  onChange={(event) => setTimeMasterForm({ ...timeMasterForm, dailyMinutes: Number(event.target.value) })}
+                />
+              </label>
+            </div>
+            <div className="tm-task-actions">
+              <button className="command" type="button" onClick={() => setTimeMasterStep(timeMasterQuestions.length - 1)}>
+                上一步
+              </button>
+              <button className="command primary" disabled={busy}>
+                {busy ? <Loader2 className="spin" size={17} /> : <WandSparkles size={17} />}
+                <span>{busy ? '生成中' : '生成资料卡片'}</span>
+              </button>
+            </div>
+          </form>
+        </section>
+      );
+    }
+
+    const selectedPhase = timeMasterPlan.phases[selectedTimeMasterPhase] ?? timeMasterPlan.phases[0];
+    return (
+      <section className="time-master-page tm-plan-page">
+        <section className="tm-plan-hero">
+          <div>
+            <p>资料卡片</p>
+            <h2>{timeMasterPlan.title}</h2>
+            <span>{timeMasterPlan.summary}</span>
+            <div className="tm-plan-metrics">
+              <strong>{timeMasterPlan.totalDays} 天周期</strong>
+              <strong>每日 {timeMasterPlan.dailyMinutes} 分钟</strong>
+              <strong>{timeMasterPlan.phases.length} 个阶段</strong>
+            </div>
+          </div>
+          <button className="tm-tomato-agent" type="button" aria-label="番茄规划 agent" onClick={() => setTimeMasterRationaleOpen(true)}>
+            <span className="tm-tomato-leaf" />
+            <span className="tm-tomato-eye left" />
+            <span className="tm-tomato-eye right" />
+            <span className="tm-tomato-mouth" />
+          </button>
+        </section>
+
+        <section className="tm-chart-panel">
+          <div>
+            <p>线性提升预测</p>
+            <h2>阶段越靠后，输出占比越高</h2>
+          </div>
+          <svg viewBox="0 0 660 220" role="img" aria-label="线性提升曲线">
+            <polyline points={forecastPolyline(timeMasterPlan.forecast)} fill="none" stroke="#e34f46" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </section>
+
+        <section className="tm-phase-grid">
+          {timeMasterPlan.phases.map((phase, index) => (
+            <button
+              type="button"
+              key={phase.id}
+              className={selectedTimeMasterPhase === index ? 'active' : ''}
+              onClick={() => setSelectedTimeMasterPhase(index)}
+            >
+              <strong>{phase.name}</strong>
+              <span>{phase.startDate} - {phase.endDate}</span>
+              <small>{phase.objective}</small>
+              <svg viewBox="0 0 180 58" aria-hidden="true">
+                <polyline points={forecastPolyline(phase.forecast, 142, 34)} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+              </svg>
+            </button>
+          ))}
+        </section>
+
+        <section className="tm-day-panel">
+          <div className="tm-day-panel-head">
+            <div>
+              <p>{selectedPhase.startDate} - {selectedPhase.endDate}</p>
+              <h2>{selectedPhase.name}</h2>
+            </div>
+            <button className="command compact" type="button" onClick={resetTimeMaster}>
+              重新生成
+            </button>
+          </div>
+          <div className="tm-day-list">
+            {selectedPhase.dailyPlans.map((day) => (
+              <article className="tm-day-item" key={`${selectedPhase.id}-${day.date}`}>
+                <div>
+                  <strong>{day.date}</strong>
+                  <span>{day.title}</span>
+                  <small>{day.timeBlock} · {day.focusMinutes} 分钟</small>
+                </div>
+                <ul>
+                  {day.checklist.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+                <button className="command compact" type="button" onClick={() => addTimeMasterDayToSchedule(day)} disabled={busy}>
+                  <Plus size={16} />
+                  <span>加入首页安排</span>
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        {timeMasterRationaleOpen && (
+          <aside className="tm-rationale-dialog" aria-label="规划原因">
+            <button className="tm-rationale-backdrop" type="button" aria-label="关闭规划原因" onClick={() => setTimeMasterRationaleOpen(false)} />
+            <section>
+              <div className="tm-tomato-agent static" aria-hidden="true">
+                <span className="tm-tomato-leaf" />
+                <span className="tm-tomato-eye left" />
+                <span className="tm-tomato-eye right" />
+                <span className="tm-tomato-mouth" />
+              </div>
+              <h2>为什么这样规划</h2>
+              <p>{timeMasterPlan.rationale}</p>
+              <button className="command primary" type="button" onClick={() => setTimeMasterRationaleOpen(false)}>
+                知道了
+              </button>
+            </section>
+          </aside>
+        )}
+      </section>
+    );
+  }
+
   if (loading) {
     return (
       <main className="loading">
@@ -596,6 +965,14 @@ export default function App() {
             <h1>Fanqie</h1>
           </div>
         </div>
+        <nav className="main-nav" aria-label="主导航">
+          <button className={activePage === 'HOME' ? 'active' : ''} type="button" onClick={() => switchPage('HOME')}>
+            首页
+          </button>
+          <button className={activePage === 'TIME_MASTER' ? 'active' : ''} type="button" onClick={() => switchPage('TIME_MASTER')}>
+            时间管理大师
+          </button>
+        </nav>
         <div className="top-actions">
           <button className="icon-button" title="通知" onClick={requestNotifications}>
             <Bell size={18} />
@@ -625,6 +1002,8 @@ export default function App() {
         </div>
       )}
 
+      {activePage === 'HOME' ? (
+        <>
       <section className="focus-stack">
         <section className="panel timer-panel">
           <div className="mode-tabs" role="tablist">
@@ -927,6 +1306,11 @@ export default function App() {
             </button>
           </form>
         </aside>
+      )}
+
+        </>
+      ) : (
+        renderTimeMasterPage()
       )}
 
       {settingsOpen && (

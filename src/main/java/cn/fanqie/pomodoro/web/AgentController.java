@@ -7,6 +7,8 @@ import cn.fanqie.pomodoro.dto.ApiDtos.AgentPlanPreviewResponse;
 import cn.fanqie.pomodoro.dto.ApiDtos.AgentPlanResponse;
 import cn.fanqie.pomodoro.dto.ApiDtos.ApplyPlanRequest;
 import cn.fanqie.pomodoro.dto.ApiDtos.ScheduleItemDto;
+import cn.fanqie.pomodoro.dto.ApiDtos.TimeMasterPlanRequest;
+import cn.fanqie.pomodoro.dto.ApiDtos.TimeMasterPlanResponse;
 import cn.fanqie.pomodoro.service.AgentService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -34,6 +36,11 @@ public class AgentController {
     @PostMapping("/plan")
     public AgentPlanResponse plan(@Valid @RequestBody AgentAdviceRequest request) {
         return agent.plan(request);
+    }
+
+    @PostMapping("/time-master")
+    public TimeMasterPlanResponse timeMaster(@Valid @RequestBody TimeMasterPlanRequest request) {
+        return agent.timeMaster(request);
     }
 
     @PostMapping("/plan/{id}/apply")
