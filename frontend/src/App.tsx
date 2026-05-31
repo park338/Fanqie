@@ -739,15 +739,36 @@ export default function App() {
     );
   }
 
-  function forecastPolyline(points: TimeMasterPlan['forecast'], width = 620, height = 170) {
+  function forecastChartPoints(points: TimeMasterPlan['forecast'], width = 620, height = 170) {
     const total = Math.max(1, points.length - 1);
     return points
       .map((point, index) => {
         const x = 20 + (index / total) * width;
         const y = 20 + height - (point.value / 100) * height;
-        return `${Math.round(x)},${Math.round(y)}`;
-      })
+        return {
+          ...point,
+          x: Math.round(x),
+          y: Math.round(y)
+        };
+      });
+  }
+
+  function forecastPolyline(points: TimeMasterPlan['forecast'], width = 620, height = 170) {
+    return forecastChartPoints(points, width, height)
+      .map((point) => `${point.x},${point.y}`)
       .join(' ');
+  }
+
+  function forecastLabels(points: TimeMasterPlan['forecast']) {
+    if (points.length <= 6) return forecastChartPoints(points);
+    const last = points.length - 1;
+    const indexes = new Set([0, Math.round(last * 0.25), Math.round(last * 0.5), Math.round(last * 0.75), last]);
+    return forecastChartPoints(points).filter((_, index) => indexes.has(index));
+  }
+
+  function formatForecastDate(value: string) {
+    const [, month, day] = value.split('-');
+    return month && day ? `${month}/${day}` : value;
   }
 
   function renderTimeMasterPage() {
@@ -846,6 +867,7 @@ export default function App() {
     }
 
     const selectedPhase = timeMasterPlan.phases[selectedTimeMasterPhase] ?? timeMasterPlan.phases[0];
+    const chartLabelPoints = forecastLabels(timeMasterPlan.forecast);
     return (
       <section className="time-master-page tm-plan-page">
         <section className="tm-plan-hero">
@@ -872,9 +894,43 @@ export default function App() {
             <p>线性提升预测</p>
             <h2>阶段越靠后，输出占比越高</h2>
           </div>
-          <svg viewBox="0 0 660 220" role="img" aria-label="线性提升曲线">
-            <polyline points={forecastPolyline(timeMasterPlan.forecast)} fill="none" stroke="#e34f46" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <div className="tm-chart-wrap">
+            <svg viewBox="0 0 660 244" role="img" aria-label="线性提升曲线，包含日期和完成度百分比">
+              <polyline
+                className="tm-forecast-line"
+                points={forecastPolyline(timeMasterPlan.forecast)}
+                pathLength={1}
+                fill="none"
+                stroke="#e34f46"
+                strokeWidth="4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              {forecastChartPoints(timeMasterPlan.forecast).map((point) => (
+                <circle className="tm-forecast-dot" key={`${point.date}-${point.value}`} cx={point.x} cy={point.y} r="4.8" />
+              ))}
+              {chartLabelPoints.map((point, index) => {
+                const isLast = index === chartLabelPoints.length - 1;
+                const labelY = isLast && point.y < 60 ? point.y + 48 : point.y < 48 ? point.y + 30 : point.y - 18;
+                const anchor = index === 0 ? 'start' : isLast ? 'end' : 'middle';
+                return (
+                  <g className="tm-forecast-label" key={`${point.date}-${point.value}-label`}>
+                    <text x={point.x} y={labelY} textAnchor={anchor}>
+                      {formatForecastDate(String(point.date))} · {point.value}%
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+            <div className="tm-chart-data-strip" aria-label="线性提升预测数据">
+              {timeMasterPlan.forecast.map((point) => (
+                <span key={`${point.date}-${point.day}-${point.value}`}>
+                  <strong>{formatForecastDate(String(point.date))}</strong>
+                  <em>{point.value}%</em>
+                </span>
+              ))}
+            </div>
+          </div>
         </section>
 
         <section className="tm-phase-grid">

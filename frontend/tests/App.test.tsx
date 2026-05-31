@@ -258,6 +258,8 @@ describe('App', () => {
     expect(await screen.findByText('LLM 作品集长期资料卡')).toBeInTheDocument();
     expect(screen.getAllByText('AI 拆出的启动阶段').length).toBeGreaterThan(0);
     expect(screen.getByText('线性提升预测')).toBeInTheDocument();
+    expect(screen.getAllByText('06/01 · 7%').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('7%').length).toBeGreaterThan(0);
     expect(fetch).toHaveBeenCalledWith(
       '/api/agent/time-master',
       expect.objectContaining({

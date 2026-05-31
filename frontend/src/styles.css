@@ -2357,3 +2357,131 @@ select:focus {
     justify-self: start;
   }
 }
+
+.tm-chart-wrap {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.tm-chart-wrap svg {
+  overflow: visible;
+}
+
+.tm-forecast-line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: forecast-grow 1.25s cubic-bezier(0.2, 0.74, 0.2, 1) 0.18s forwards;
+  filter: drop-shadow(0 8px 10px rgba(223, 75, 64, 0.18));
+}
+
+.tm-forecast-dot {
+  fill: #fffaf2;
+  stroke: #e34f46;
+  stroke-width: 3;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: forecast-point-rise 0.42s ease-out 1.05s forwards;
+}
+
+.tm-forecast-label {
+  opacity: 0;
+  animation: forecast-label-rise 0.38s ease-out 1.2s forwards;
+}
+
+.tm-forecast-label text {
+  fill: #27313c;
+  paint-order: stroke;
+  stroke: rgba(255, 250, 242, 0.92);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.tm-chart-data-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 8px;
+  scrollbar-width: thin;
+}
+
+.tm-chart-data-strip span {
+  flex: 0 0 auto;
+  min-width: 78px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid rgba(24, 33, 42, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.72);
+}
+
+.tm-chart-data-strip strong,
+.tm-chart-data-strip em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tm-chart-data-strip strong {
+  color: var(--fq-muted);
+  font-size: 12px;
+}
+
+.tm-chart-data-strip em {
+  color: var(--fq-tomato);
+  font-size: 15px;
+  font-weight: 950;
+}
+
+@keyframes forecast-grow {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes forecast-point-rise {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes forecast-label-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tm-forecast-line,
+  .tm-forecast-dot,
+  .tm-forecast-label {
+    animation: none;
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .tm-chart-wrap svg {
+    min-height: 210px;
+  }
+
+  .tm-forecast-label text {
+    font-size: 12px;
+  }
+}
