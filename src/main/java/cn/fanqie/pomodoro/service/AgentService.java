@@ -67,9 +67,11 @@ public class AgentService {
             timeBlock 必须使用 HH:mm-HH:mm；date、startDate、endDate 必须使用 YYYY-MM-DD。
             forecast 是线性提升预测点数组，每项包含 date、day、value、phaseId；value 使用 0 到 100 的整数，最后一个点必须是 100。
             rationale 要解释为什么这样拆阶段、安排强度和复盘节奏。
+            %s
             不要声称用户已经完成某项工作，不要编造用户没有提供的固定日程。
-            """;
+            """.formatted(TimeMasterLearningPlanPolicy.SYSTEM_RULES);
 
+    private final TimeMasterLearningPlanPolicy timeMasterPolicy = new TimeMasterLearningPlanPolicy();
     private final LlmClient llm;
     private final ObjectMapper objectMapper;
     private final TaskRepository tasks;
@@ -309,6 +311,9 @@ public class AgentService {
                 - restPattern: %s
                 - reviewPreference: %s
 
+                学习与排程策略:
+                %s
+
                 请基于以上输入给出阶段拆分、每日计划、线性提升预测和规划原因。
                 每个 dailyPlans 项都要能直接加入首页时间安排：scheduleTitle 要像日程标题，scheduleNotes 要说明当天动作和安排理由。
                 """.formatted(
@@ -322,7 +327,8 @@ public class AgentService {
                 request.habits().energy(),
                 request.habits().focusStyle(),
                 request.habits().restPattern(),
-                request.habits().reviewPreference()
+                request.habits().reviewPreference(),
+                timeMasterPolicy.contextGuidance(request)
         );
     }
 
@@ -386,7 +392,7 @@ public class AgentService {
         try {
             String json = unwrapOpenAiResponse(raw);
             JsonNode node = objectMapper.readTree(json);
-            List<TimeMasterPhaseDto> phases = readTimeMasterPhasesNode(node.get("phases"));
+            List<TimeMasterPhaseDto> phases = readTimeMasterPhasesNode(node.get("phases"), request);
             if (phases.isEmpty()) {
                 throw new IllegalArgumentException("missing phases");
             }
@@ -422,7 +428,7 @@ public class AgentService {
         );
     }
 
-    private List<TimeMasterPhaseDto> readTimeMasterPhasesNode(JsonNode node) {
+    private List<TimeMasterPhaseDto> readTimeMasterPhasesNode(JsonNode node, TimeMasterPlanRequest request) {
         if (node == null || !node.isArray()) {
             return Collections.emptyList();
         }
@@ -439,7 +445,7 @@ public class AgentService {
                         phase.startDate(),
                         phase.endDate(),
                         cleanText(phase.objective(), "推进当前阶段目标。", 500),
-                        sanitizeDailyPlans(phase.dailyPlans()),
+                        sanitizeDailyPlans(phase.dailyPlans(), request.habits()),
                         sanitizeForecast(phase.forecast())
                 ));
             } catch (Exception ignored) {
@@ -449,7 +455,7 @@ public class AgentService {
         return phases;
     }
 
-    private List<TimeMasterDailyPlanDto> sanitizeDailyPlans(List<TimeMasterDailyPlanDto> plans) {
+    private List<TimeMasterDailyPlanDto> sanitizeDailyPlans(List<TimeMasterDailyPlanDto> plans, TimeMasterHabitsDto habits) {
         if (plans == null) {
             return Collections.emptyList();
         }
@@ -462,13 +468,20 @@ public class AgentService {
                     plan.date(),
                     cleanText(plan.title(), "每日推进", 255),
                     clamp(plan.focusMinutes(), 1, 360),
-                    cleanText(plan.timeBlock(), "08:30-09:30", 32),
+                    normalizeTimeBlock(plan.timeBlock()),
                     cleanStringList(plan.checklist(), 8, 160),
                     cleanText(plan.scheduleTitle(), plan.title(), 255),
                     cleanText(plan.scheduleNotes(), "来自时间管理大师的长期任务安排。", 2000)
             ));
         }
-        return sanitized;
+        return timeMasterPolicy.diversifyRepeatedTimeBlocks(sanitized, habits);
+    }
+
+    private String normalizeTimeBlock(String value) {
+        String cleaned = cleanText(value, "", 32);
+        return cleaned.matches("([01]\\d|2[0-3]):[0-5]\\d-([01]\\d|2[0-3]):[0-5]\\d")
+                ? cleaned
+                : "08:30-09:30";
     }
 
     private List<TimeMasterForecastPointDto> readTimeMasterForecastNode(JsonNode node) {
