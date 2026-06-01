@@ -79,6 +79,10 @@ const mascotGreetings = [
   '有压力就点我，我们把它拆小。'
 ];
 
+const welcomeCopy = '今天不用一下子处理所有事情。\nFanqie 正在整理你的任务、时间块和番茄节奏，先让注意力有一个安静的入口。';
+const welcomeDurationMs = 3600;
+const welcomeTypingIntervalMs = 48;
+
 type AgentMode = 'ADVICE' | 'PLAN';
 
 interface ChatMessage {
@@ -206,6 +210,12 @@ function formatTimeRange(startAt: string, endAt: string) {
   return `${formatClock(startAt)} - ${formatClock(endAt)}`;
 }
 
+function formatScheduleDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+}
+
 function durationLabel(startAt: string, endAt: string) {
   const start = new Date(startAt).getTime();
   const end = new Date(endAt).getTime();
@@ -258,6 +268,9 @@ export default function App() {
   const [timeMasterPlan, setTimeMasterPlan] = useState<TimeMasterPlan | null>(null);
   const [selectedTimeMasterPhase, setSelectedTimeMasterPhase] = useState(0);
   const [timeMasterRationaleOpen, setTimeMasterRationaleOpen] = useState(false);
+  const [timeMasterDisplayedProgress, setTimeMasterDisplayedProgress] = useState(0);
+  const timeMasterProgressFrame = useRef<number | null>(null);
+  const timeMasterProgressValue = useRef(0);
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentMode, setAgentMode] = useState<AgentMode>('ADVICE');
   const [agentInput, setAgentInput] = useState('');
@@ -271,9 +284,14 @@ export default function App() {
   const [mascotGreeting, setMascotGreeting] = useState(mascotGreetings[0]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [welcomeOpen, setWelcomeOpen] = useState(true);
+  const [welcomeTextLength, setWelcomeTextLength] = useState(0);
+  const [welcomeProgress, setWelcomeProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const completingRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const welcomeFrameRef = useRef<number | null>(null);
+  const welcomeTypingRef = useRef<number | null>(null);
   const scheduleStartedRef = useRef<Set<number>>(new Set());
   const scheduleEndedRef = useRef<Set<number>>(new Set());
   const chatIdRef = useRef(2);
@@ -288,13 +306,14 @@ export default function App() {
   const timerHint = timer?.status === 'NEW' && timer.mode !== displayMode
     ? `${modeLabels[displayMode]}准备开始`
     : timer?.hint ?? '准备开始';
+  const visibleWelcomeText = welcomeCopy.slice(0, welcomeTextLength);
 
   const refresh = useCallback(async () => {
     const [nextSettings, nextTasks, nextTimer, nextSchedule, nextStats, nextTrend, nextInterruptions] = await Promise.all([
       api.settings(),
       api.tasks(),
       api.timer(),
-      api.scheduleToday(),
+      api.scheduleUpcoming(),
       api.stats(),
       api.statsTrend(7),
       api.interruptionsToday()
@@ -318,6 +337,116 @@ export default function App() {
   }, [refresh]);
 
   useEffect(() => {
+    if (loading || !welcomeOpen) return;
+
+    setWelcomeTextLength(0);
+    setWelcomeProgress(0);
+
+    welcomeTypingRef.current = window.setInterval(() => {
+      setWelcomeTextLength((length) => {
+        if (length >= welcomeCopy.length) {
+          if (welcomeTypingRef.current !== null) {
+            window.clearInterval(welcomeTypingRef.current);
+            welcomeTypingRef.current = null;
+          }
+          return length;
+        }
+        return length + 1;
+      });
+    }, welcomeTypingIntervalMs);
+
+    let startedAt: number | null = null;
+    const animateWelcome = (time: number) => {
+      startedAt ??= time;
+      const elapsed = Math.max(0, Math.min(1, (time - startedAt) / welcomeDurationMs));
+      const eased = 1 - Math.pow(1 - elapsed, 2);
+      setWelcomeProgress(Math.round(eased * 100));
+
+      if (elapsed < 1) {
+        welcomeFrameRef.current = window.requestAnimationFrame(animateWelcome);
+        return;
+      }
+
+      welcomeFrameRef.current = null;
+      if (welcomeTypingRef.current !== null) {
+        window.clearInterval(welcomeTypingRef.current);
+        welcomeTypingRef.current = null;
+      }
+      setWelcomeTextLength(welcomeCopy.length);
+      setWelcomeProgress(100);
+      setActivePage('HOME');
+      setAgentOpen(false);
+      setTimeMasterRationaleOpen(false);
+      setWelcomeOpen(false);
+    };
+
+    welcomeFrameRef.current = window.requestAnimationFrame(animateWelcome);
+
+    return () => {
+      if (welcomeFrameRef.current !== null) {
+        window.cancelAnimationFrame(welcomeFrameRef.current);
+        welcomeFrameRef.current = null;
+      }
+      if (welcomeTypingRef.current !== null) {
+        window.clearInterval(welcomeTypingRef.current);
+        welcomeTypingRef.current = null;
+      }
+    };
+  }, [loading, welcomeOpen]);
+
+  useEffect(() => {
+    const targetProgress = activePage === 'TIME_MASTER' && !timeMasterPlan && timeMasterStep < timeMasterQuestions.length
+      ? Math.round(((timeMasterStep + 1) / (timeMasterQuestions.length + 1)) * 100)
+      : 0;
+
+    if (timeMasterProgressFrame.current !== null) {
+      window.cancelAnimationFrame(timeMasterProgressFrame.current);
+      timeMasterProgressFrame.current = null;
+    }
+
+    if (activePage !== 'TIME_MASTER' || timeMasterPlan) {
+      setTimeMasterDisplayedProgress(0);
+      timeMasterProgressValue.current = 0;
+      return;
+    }
+
+    if (targetProgress === 0) {
+      timeMasterProgressValue.current = 0;
+      setTimeMasterDisplayedProgress(0);
+      return;
+    }
+
+    const startedAt = performance.now();
+    const from = timeMasterProgressValue.current;
+    const distance = targetProgress - from;
+    const duration = Math.max(900, Math.min(1800, Math.abs(distance) * 36));
+
+    const animateProgress = (time: number) => {
+      const elapsed = Math.min(1, (time - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - elapsed, 3);
+      const next = from + distance * eased;
+
+      timeMasterProgressValue.current = next;
+      setTimeMasterDisplayedProgress(Math.round(next));
+
+      if (elapsed < 1) {
+        timeMasterProgressFrame.current = window.requestAnimationFrame(animateProgress);
+      } else {
+        timeMasterProgressFrame.current = null;
+      }
+    };
+
+    timeMasterProgressFrame.current = window.requestAnimationFrame(animateProgress);
+
+    return () => {
+      if (timeMasterProgressFrame.current !== null) {
+        window.cancelAnimationFrame(timeMasterProgressFrame.current);
+        timeMasterProgressFrame.current = null;
+      }
+    };
+  }, [activePage, timeMasterPlan, timeMasterStep]);
+
+  useEffect(() => {
     if (!timer || timer.status !== 'PLAYING') return;
     const id = window.setInterval(() => {
       setLocalRemaining((remaining) => {
@@ -336,6 +465,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (welcomeOpen && !loading) return;
       const target = event.target as HTMLElement | null;
       if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
       if (event.code === 'Space') {
@@ -351,7 +481,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [timer, selectedMode, settings]);
+  }, [timer, selectedMode, settings, loading, welcomeOpen]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -393,7 +523,7 @@ export default function App() {
 
   useEffect(() => {
     const id = window.setInterval(() => {
-      api.scheduleToday()
+      api.scheduleUpcoming()
         .then(setSchedule)
         .catch(() => {
           // Keep the current timeline visible if a background refresh fails.
@@ -464,7 +594,7 @@ export default function App() {
   async function refreshSideData() {
     const [nextTasks, nextSchedule, nextStats, nextTrend, nextInterruptions] = await Promise.all([
       api.tasks(),
-      api.scheduleToday(),
+      api.scheduleUpcoming(),
       api.stats(),
       api.statsTrend(7),
       api.interruptionsToday()
@@ -553,7 +683,7 @@ export default function App() {
     if (!scheduleForm.title.trim()) return;
     await run(() => api.createSchedule(scheduleForm), async () => {
       setScheduleForm(emptyScheduleForm());
-      setSchedule(await api.scheduleToday());
+      setSchedule(await api.scheduleUpcoming());
     });
   }
 
@@ -669,7 +799,7 @@ export default function App() {
       return;
     }
     await run(() => api.applyPlan(plan.draftId, blockIndexes), async (items) => {
-      setSchedule(await api.scheduleToday());
+      setSchedule(await api.scheduleUpcoming());
       addAgentMessage({ role: 'agent', text: `已加入 ${items.length} 个时间块，到点后我会提醒你。` });
     });
   }
@@ -698,6 +828,8 @@ export default function App() {
     setTimeMasterPlan(null);
     setSelectedTimeMasterPhase(0);
     setTimeMasterRationaleOpen(false);
+    setTimeMasterDisplayedProgress(0);
+    timeMasterProgressValue.current = 0;
   }
 
   async function submitTimeMasterTask(event: FormEvent) {
@@ -710,6 +842,8 @@ export default function App() {
         habits: resolveTimeMasterHabits(timeMasterHabits)
       });
       setTimeMasterPlan(nextPlan);
+      setTimeMasterDisplayedProgress(0);
+      timeMasterProgressValue.current = 0;
       setSelectedTimeMasterPhase(0);
       setTimeMasterRationaleOpen(false);
     } catch (ex) {
@@ -734,7 +868,7 @@ export default function App() {
         }),
       async () => {
         setScheduleNotice(`${day.date} 已加入首页时间安排`);
-        setSchedule(await api.scheduleToday());
+      setSchedule(await api.scheduleUpcoming());
       }
     );
   }
@@ -774,12 +908,11 @@ export default function App() {
   function renderTimeMasterPage() {
     if (!timeMasterPlan && timeMasterStep < timeMasterQuestions.length) {
       const question = timeMasterQuestions[timeMasterStep];
-      const progress = Math.round(((timeMasterStep + 1) / (timeMasterQuestions.length + 1)) * 100);
       return (
         <section className="time-master-page">
           <div className="tm-progress" aria-label="生成进度">
-            <span><i style={{ width: `${progress}%` }} /></span>
-            <strong>{progress}%</strong>
+            <span><i style={{ width: `${timeMasterDisplayedProgress}%` }} /></span>
+            <strong>{timeMasterDisplayedProgress}%</strong>
           </div>
           <section className="tm-question-card">
             <p>{question.eyebrow}</p>
@@ -1014,6 +1147,33 @@ export default function App() {
 
   return (
     <main className={`app-shell app-mode-${displayMode.toLowerCase().replace('_', '-')} theme-${settings.theme}`}>
+      {welcomeOpen && (
+        <aside className="welcome-overlay" role="dialog" aria-modal="true" aria-label="Fanqie 欢迎">
+          <section className="welcome-card">
+            <div className="welcome-mark" aria-hidden="true">
+              <span className="tomato-mark" />
+              <i />
+            </div>
+            <div className="welcome-kicker">Fanqie</div>
+            <h2>先把今天放稳</h2>
+            <p className="welcome-copy" aria-live="polite">
+              {visibleWelcomeText}
+              {welcomeTextLength < welcomeCopy.length && <span className="welcome-caret" aria-hidden="true" />}
+            </p>
+            <div
+              className="welcome-progress"
+              role="progressbar"
+              aria-label="进入首页进度"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={welcomeProgress}
+            >
+              <span style={{ width: `${welcomeProgress}%` }} />
+            </div>
+          </section>
+        </aside>
+      )}
+
       <header className="topbar">
         <div className="brand">
           <span className="tomato-mark" aria-hidden="true" />
@@ -1202,10 +1362,10 @@ export default function App() {
               <h2>时间安排</h2>
             </div>
             <div className="timeline">
-              {schedule.length === 0 && <p className="empty-state">今天还没有时间块。</p>}
+              {schedule.length === 0 && <p className="empty-state">近期还没有时间块。</p>}
               {schedule.map((item) => (
                 <article className={`timeline-item status-${item.status.toLowerCase().replace('_', '-')}`} key={item.id}>
-                  <time>{formatTimeRange(item.startAt, item.endAt)}</time>
+                  <time>{formatScheduleDate(item.startAt)} · {formatTimeRange(item.startAt, item.endAt)}</time>
                   {editingScheduleId === item.id ? (
                     <form className="timeline-edit" onSubmit={saveScheduleEdit}>
                       <input value={scheduleEditForm.title} onChange={(event) => setScheduleEditForm({ ...scheduleEditForm, title: event.target.value })} />

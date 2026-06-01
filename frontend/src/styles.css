@@ -55,6 +55,10 @@ body:has(.app-mode-long-break) {
   background-size: 32px 32px, 88px 88px, 100% 100%, 100% 100%, 100% 100%;
 }
 
+body:has(.welcome-overlay) {
+  overflow: hidden;
+}
+
 button,
 input,
 textarea,
@@ -72,6 +76,163 @@ button {
   place-items: center;
   gap: 10px;
   color: #fff8f1;
+}
+
+.welcome-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  min-width: 320px;
+  min-height: 100vh;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(125deg, rgba(224, 82, 72, 0.5), transparent 44%),
+    linear-gradient(305deg, rgba(42, 136, 118, 0.52), transparent 48%),
+    #17202a;
+  background-size: 42px 42px, 42px 42px, 100% 100%, 100% 100%, 100% 100%;
+}
+
+.welcome-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 20px;
+  border: 1px solid rgba(255, 248, 241, 0.14);
+  pointer-events: none;
+}
+
+.welcome-card {
+  position: relative;
+  width: min(92vw, 560px);
+  min-height: 360px;
+  padding: 34px 36px 30px;
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto;
+  gap: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 248, 241, 0.2);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 248, 241, 0.98), rgba(236, 242, 231, 0.94)),
+    #fff8f1;
+  color: #1c2630;
+  box-shadow: 0 34px 90px rgba(7, 14, 20, 0.42);
+  animation: welcome-card-rise 560ms ease both;
+}
+
+.welcome-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent 0 22%, rgba(214, 88, 82, 0.12) 22% 22.8%, transparent 22.8%),
+    repeating-linear-gradient(0deg, transparent 0 31px, rgba(28, 38, 48, 0.055) 31px 32px);
+  pointer-events: none;
+}
+
+.welcome-mark,
+.welcome-kicker,
+.welcome-card h2,
+.welcome-copy,
+.welcome-progress {
+  position: relative;
+}
+
+.welcome-mark {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+}
+
+.welcome-mark .tomato-mark {
+  width: 46px;
+  height: 46px;
+  transform: rotate(-6deg);
+}
+
+.welcome-mark i {
+  position: absolute;
+  right: -4px;
+  bottom: 7px;
+  width: 19px;
+  height: 19px;
+  border: 2px solid #fff8f1;
+  border-radius: 50%;
+  background: #2f6f69;
+}
+
+.welcome-kicker {
+  color: #b3483f;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.welcome-card h2 {
+  margin: 0;
+  max-width: 8em;
+  color: #16202a;
+  font-size: clamp(38px, 7vw, 64px);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.welcome-copy {
+  margin: 8px 0 24px;
+  min-height: 92px;
+  color: #3b4854;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.75;
+  white-space: pre-line;
+}
+
+.welcome-caret {
+  display: inline-block;
+  width: 9px;
+  height: 1.2em;
+  margin-left: 3px;
+  vertical-align: -0.2em;
+  background: #d65852;
+  animation: welcome-caret-blink 820ms steps(1, end) infinite;
+}
+
+.welcome-progress {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(22, 32, 42, 0.14);
+}
+
+.welcome-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d65852, #f0a95b 48%, #2f6f69);
+  transition: width 160ms linear;
+}
+
+@keyframes welcome-card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes welcome-caret-blink {
+  50% {
+    opacity: 0;
+  }
 }
 
 .spin {
@@ -1297,6 +1458,7 @@ select:focus {
 }
 
 .tm-progress span {
+  position: relative;
   height: 10px;
   overflow: hidden;
   border-radius: 999px;
@@ -1308,6 +1470,11 @@ select:focus {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, #56b7a1, #e85d4f, #f0b45a);
+  transition: width 220ms linear;
+}
+
+.tm-progress strong {
+  transition: transform 220ms ease, opacity 220ms ease;
 }
 
 .tm-question-card,
@@ -1660,6 +1827,28 @@ select:focus {
 @media (max-width: 680px) {
   .app-shell {
     padding: 14px 14px 118px;
+  }
+
+  .welcome-overlay {
+    padding: 16px;
+  }
+
+  .welcome-overlay::before {
+    inset: 10px;
+  }
+
+  .welcome-card {
+    min-height: 330px;
+    padding: 26px 24px 24px;
+  }
+
+  .welcome-card h2 {
+    font-size: 42px;
+  }
+
+  .welcome-copy {
+    min-height: 118px;
+    font-size: 15px;
   }
 
   .topbar {
@@ -2467,12 +2656,24 @@ select:focus {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .welcome-card,
+  .welcome-caret,
+  .welcome-progress span,
   .tm-forecast-line,
   .tm-forecast-dot,
   .tm-forecast-label {
     animation: none;
+  }
+
+  .tm-forecast-line,
+  .tm-forecast-dot,
+  .tm-forecast-label {
     opacity: 1;
     stroke-dashoffset: 0;
+  }
+
+  .welcome-progress span {
+    transition: none;
   }
 }
 

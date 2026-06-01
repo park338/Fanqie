@@ -42,12 +42,25 @@ const trend = {
   ]
 };
 
+const mockScheduleItems: unknown[] = [];
+
 function json(value: unknown) {
   return Promise.resolve(new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 }
 
+async function waitForHomeReady() {
+  await screen.findByText('25:00');
+  await waitFor(
+    () => {
+      expect(screen.queryByRole('dialog', { name: 'Fanqie 欢迎' })).not.toBeInTheDocument();
+    },
+    { timeout: 5000 }
+  );
+}
+
 describe('App', () => {
   beforeEach(() => {
+    mockScheduleItems.length = 0;
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -57,19 +70,19 @@ describe('App', () => {
         if (url === '/api/timer') return json(timer);
         if (url === '/api/stats/today') return json(stats);
         if (url === '/api/stats/range?days=7') return json(trend);
-        if (url === '/api/schedule/today' && method === 'POST') {
-          return json({
-            id: 99,
-            title: '启动校准 D1: 完成作品集',
-            startAt: '2026-06-01T08:30',
-            endAt: '2026-06-01T10:00',
+        if (url === '/api/schedule' && method === 'POST') {
+          const item = JSON.parse(String(init?.body ?? '{}'));
+          const created = {
+            ...item,
+            id: 99 + mockScheduleItems.length,
             status: 'PLANNED',
-            source: 'AGENT',
-            taskId: null,
-            notes: '来自时间管理大师'
-          });
+            source: item.source ?? 'AGENT'
+          };
+          mockScheduleItems.push(created);
+          return json(created);
         }
         if (url === '/api/schedule/today') return json([]);
+        if (url.startsWith('/api/schedule/upcoming')) return json([...mockScheduleItems]);
         if (url === '/api/interruptions/today') return json([]);
         if (url === '/api/interruptions' && method === 'POST') {
           return json({
@@ -109,6 +122,15 @@ describe('App', () => {
                     checklist: ['列出候选项目', '选出三个代表案例'],
                     scheduleTitle: '作品集：筛选代表项目',
                     scheduleNotes: '来自 LLM 的第一天安排'
+                  },
+                  {
+                    date: '2026-06-02',
+                    title: '补齐项目说明',
+                    focusMinutes: 90,
+                    timeBlock: '09:00-10:30',
+                    checklist: ['补 README', '整理截图'],
+                    scheduleTitle: '作品集：补齐项目说明',
+                    scheduleNotes: '来自 LLM 的第二天安排'
                   }
                 ],
                 forecast: [{ date: '2026-06-01', day: 1, value: 7, phaseId: 'calibrate' }]
@@ -165,11 +187,40 @@ describe('App', () => {
     expect(screen.getByText('今日番茄')).toBeInTheDocument();
   });
 
+  it('shows a progressive welcome card before entering the home page', async () => {
+    const { container } = render(<App />);
+
+    expect(await screen.findByRole('dialog', { name: 'Fanqie 欢迎' })).toBeInTheDocument();
+    const copy = container.querySelector('.welcome-copy');
+    const progress = screen.getByRole('progressbar', { name: '进入首页进度' });
+
+    expect(copy).not.toHaveTextContent('安静的入口');
+    expect(progress).toHaveAttribute('aria-valuenow', '0');
+
+    await waitFor(() => {
+      expect(copy?.textContent?.length ?? 0).toBeGreaterThan(8);
+      expect(Number(progress.getAttribute('aria-valuenow'))).toBeGreaterThan(0);
+    });
+    expect(copy).not.toHaveTextContent('安静的入口');
+
+    expect(await screen.findByText(/安静的入口/, undefined, { timeout: 3200 })).toBeInTheDocument();
+
+    await waitFor(
+      () => {
+        expect(screen.queryByRole('dialog', { name: 'Fanqie 欢迎' })).not.toBeInTheDocument();
+      },
+      { timeout: 4500 }
+    );
+
+    expect(screen.getByRole('button', { name: '首页' })).toHaveClass('active');
+    expect(screen.getByText('25:00')).toBeInTheDocument();
+  });
+
   it('posts a new task from the task form', async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByText('25:00');
+    await waitForHomeReady();
     await user.type(screen.getByPlaceholderText('输入任务'), '写测试');
     await user.click(screen.getByTitle('新增任务'));
 
@@ -182,7 +233,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
-    await screen.findByText('25:00');
+    await waitForHomeReady();
     await user.click(screen.getByRole('button', { name: '长休息' }));
 
     expect(screen.getByText('15:00')).toBeInTheDocument();
@@ -194,7 +245,7 @@ describe('App', () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
 
-    await screen.findByText('25:00');
+    await waitForHomeReady();
     await user.click(screen.getByLabelText('打开小茄聊天'));
     expect(screen.getByText(/我是小茄/)).toBeInTheDocument();
     expect(container.querySelector('.tomato-chibi')).toBeInTheDocument();
@@ -210,7 +261,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByText('25:00');
+    await waitForHomeReady();
     await user.type(screen.getByPlaceholderText('打断备注'), '被会议打断');
     await user.click(screen.getByRole('button', { name: '记录打断' }));
 
@@ -224,7 +275,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByText('25:00');
+    await waitForHomeReady();
     await user.click(screen.getByTitle('设置'));
 
     expect(screen.getByLabelText('主题')).toBeInTheDocument();
@@ -236,7 +287,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByText('25:00');
+    await waitForHomeReady();
     await user.click(screen.getByRole('button', { name: '时间管理大师' }));
 
     expect(await screen.findByText('你通常哪段时间最适合处理难任务？')).toBeInTheDocument();
@@ -268,10 +319,59 @@ describe('App', () => {
       })
     );
 
-    await user.click(screen.getAllByRole('button', { name: '加入首页安排' })[0]);
+    await user.click(screen.getAllByRole('button', { name: '加入首页安排' })[1]);
 
     await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith('/api/schedule/today', expect.objectContaining({ method: 'POST' }));
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/schedule',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('2026-06-02T09:00')
+        })
+      );
     });
-  });
+    await user.click(screen.getByRole('button', { name: '首页' }));
+    expect(await screen.findByText('06/02 · 09:00 - 10:30')).toBeInTheDocument();
+    expect(screen.getByText('作品集：补齐项目说明')).toBeInTheDocument();
+  }, 12000);
+
+  it('animates the time master progress bar toward the next step', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await waitForHomeReady();
+    await user.click(screen.getByRole('button', { name: '时间管理大师' }));
+
+    expect(await screen.findByText('你通常哪段时间最适合处理难任务？')).toBeInTheDocument();
+
+    const progress = container.querySelector('.tm-progress');
+    const fill = container.querySelector<HTMLElement>('.tm-progress i');
+
+    expect(progress).toBeInTheDocument();
+    expect(fill).toBeInTheDocument();
+    expect(progress).not.toHaveTextContent('40%');
+    expect(Number.parseFloat(fill?.style.width || '0')).toBeLessThan(40);
+
+    await waitFor(
+      () => {
+        expect(progress).toHaveTextContent('20%');
+        expect(Number.parseFloat(fill?.style.width || '0')).toBe(20);
+      },
+      { timeout: 2500 }
+    );
+
+    await user.click(screen.getByRole('button', { name: /早上/ }));
+
+    expect(await screen.findByText('你更习惯怎样完成一段长期任务？')).toBeInTheDocument();
+    expect(progress).not.toHaveTextContent('40%');
+    expect(Number.parseFloat(fill?.style.width || '0')).toBeLessThan(40);
+
+    await waitFor(
+      () => {
+        expect(progress).toHaveTextContent('40%');
+        expect(Number.parseFloat(fill?.style.width || '0')).toBe(40);
+      },
+      { timeout: 2500 }
+    );
+  }, 12000);
 });

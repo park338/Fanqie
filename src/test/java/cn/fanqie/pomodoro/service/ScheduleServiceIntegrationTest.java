@@ -105,6 +105,35 @@ class ScheduleServiceIntegrationTest {
                 .containsExactly(ScheduleStatus.IN_PROGRESS, ScheduleStatus.SKIPPED);
     }
 
+    @Test
+    void upcomingIncludesFutureScheduleItemsCreatedFromLongTermPlans() {
+        scheduleService.create(new ScheduleUpsertRequest(
+                "Today",
+                LocalDateTime.of(2026, 5, 26, 15, 20),
+                LocalDateTime.of(2026, 5, 26, 15, 45),
+                ScheduleStatus.PLANNED,
+                ScheduleSource.AGENT,
+                null,
+                null
+        ));
+        scheduleService.create(new ScheduleUpsertRequest(
+                "Tomorrow",
+                LocalDateTime.of(2026, 5, 27, 9, 0),
+                LocalDateTime.of(2026, 5, 27, 10, 30),
+                ScheduleStatus.PLANNED,
+                ScheduleSource.AGENT,
+                null,
+                null
+        ));
+
+        assertThat(scheduleService.today())
+                .extracting(ScheduleItemDto::title)
+                .containsExactly("Today");
+        assertThat(scheduleService.upcoming(2))
+                .extracting(ScheduleItemDto::title)
+                .containsExactly("Today", "Tomorrow");
+    }
+
     private ScheduleUpsertRequest request(String title, int startHour, int startMinute, int endHour, int endMinute) {
         return new ScheduleUpsertRequest(
                 title,

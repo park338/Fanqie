@@ -49,6 +49,20 @@ public class ScheduleService {
     }
 
     @Transactional
+    public List<ScheduleItemDto> upcoming(int days) {
+        LocalDate startDate = LocalDate.now(clock);
+        LocalDateTime start = startDate.atStartOfDay();
+        LocalDateTime end = start.plusDays(Math.max(1, Math.min(days, 30)));
+        LocalDateTime now = now();
+        List<ScheduleItemEntity> items = scheduleItems.findByStartAtGreaterThanEqualAndStartAtLessThanOrderByStartAtAsc(start, end);
+        items.forEach(item -> advanceStatus(item, now));
+        resolveExistingConflicts(items, now);
+        return items.stream()
+                .map(this::toDto)
+                .toList();
+    }
+
+    @Transactional
     public ScheduleItemDto create(ScheduleUpsertRequest request) {
         LocalDateTime now = now();
         ScheduleItemEntity entity = new ScheduleItemEntity();

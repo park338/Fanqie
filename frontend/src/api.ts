@@ -58,8 +58,9 @@ export const api = {
   completeTimer: () => request<TimerState>('/api/timer/complete', { method: 'POST' }),
 
   scheduleToday: () => request<ScheduleItem[]>('/api/schedule/today'),
+  scheduleUpcoming: (days = 14) => request<ScheduleItem[]>(`/api/schedule/upcoming?days=${days}`),
   createSchedule: (item: Omit<ScheduleItem, 'id'>) =>
-    request<ScheduleItem>('/api/schedule/today', { method: 'POST', body: JSON.stringify(item) }),
+    request<ScheduleItem>('/api/schedule', { method: 'POST', body: JSON.stringify(item) }),
   updateSchedule: (id: number, item: Omit<ScheduleItem, 'id'>) =>
     request<ScheduleItem>(`/api/schedule/today/${id}`, { method: 'PATCH', body: JSON.stringify(item) }),
   deleteSchedule: (id: number) => request<void>(`/api/schedule/today/${id}`, { method: 'DELETE' }),
